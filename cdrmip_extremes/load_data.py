@@ -24,7 +24,7 @@ def load_raw_tas():
 def load_tas_anom():
     data = {}
     save_dir = os.path.join(data_dir,'processed/tas/anomalies')
-    for model, ds in anoms.items():
+    for model in models:
         path = os.path.join(
             save_dir,
             f"{model}_cdr-reversibility_tas_anom.nc"
@@ -43,4 +43,21 @@ def load_gsat():
         )
         gsat[model] = xr.open_dataarray(path)
     return gsat
+
+def load_gwl_years():
+    save_dir = os.path.join(
+        data_dir,"processed/gwl_years"
+    )
+    gwl_years = {}
+    for model in models:
+        path = os.path.join(
+            save_dir,
+            f"{model}_gwl_years.nc"
+        )
+        gwl_years[model] = xr.open_dataarray(path)
+    return gwl_years
+
+def load_equiv_gwls():
+    path = os.path.join(data_dir,"processed/revised_gwl/matched_gwls.nc")
+    return = xr.open_dataset(path)
     

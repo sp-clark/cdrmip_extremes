@@ -78,3 +78,53 @@ def find_matching_gwls(
     exceed_year = int(ramp_up.where(ramp_up>=end_gwl).dropna(dim='year')['year'][0])
 
     return [end_gwl, exceed_year]
+
+def extract_gwl_period(ds, gwl_years, window, time_dim='year'):
+    """
+    Extract multi-year windows of a timeseries centred around
+    global warming level (GWL) crossing years.
+
+    Parameters
+    ----------
+    ds : xarray.DataArray
+        Yearly time series (e.g., temperature, precipitation, etc.)
+        with a 'year' dimension.
+    gwl_years : xarray.DataArray
+        DataArray specifying the years corresponding to the crossing 
+        of GWLs, with coordinates 'branch' (e.g., 'ramp_up', 'ramp_down') 
+        and 'gwl' (e.g., 1.5, 2.0, 3.0).
+    window : int
+        Length of the window to extract, typically 21 years. 
+        The window is centred on the GWL crossing year.
+
+    Returns
+    -------
+    xarray.DataArray
+        Concatenated DataArray containing the values of `ds` for each 
+        GWL and branch within the specified time window. 
+        Dimensions: ['branch', 'gwl', 'year', ...].
+    """
+    branches = gwl_years.branch.values
+    gwls = gwl_years.gwl.values
+
+    if time_dim != 'year':
+        ds = ds.groupby('time.year').mean(dim='time')
+    
+    def extract_windows(years):
+        """Extract windows of `ds` centered on each GWL year."""
+        periods = []
+        for year in years:
+            start = year - (window - 1) // 2
+            end = year + (window + 1) // 2
+            ds_window = ds.isel(year=slice(start, end)).dropna(dim='year')
+            periods.append(ds_window)
+        return xr.concat(periods, dim='gwl').assign_coords(gwl=gwls)
+
+    # Loop over branches (e.g., ramp-up, ramp-down) and extract their GWL periods
+    results = [
+        extract_windows(gwl_years.sel(branch=branch).values)
+        for branch in branches
+    ]
+    
+    # Combine results for both branches
+    return xr.concat(results, dim='branch').assign_coords(branch=branches)
