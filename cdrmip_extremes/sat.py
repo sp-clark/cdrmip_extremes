@@ -128,3 +128,30 @@ def extract_gwl_period(ds, gwl_years, window, time_dim='year'):
     
     # Combine results for both branches
     return xr.concat(results, dim='branch').assign_coords(branch=branches)
+
+def extract_equiv_gwl_period(ds,final_gwl,exceed_year,window,time_dim='year'):
+
+    if time_dim != 'year':
+        ds = ds.groupby('time.year').mean(dim='time')
+        
+    # extract final 21-year period and equivalent ramp-up gwl period from ds
+    ramp_up = ds.sel(year=slice(exceed_year-10,exceed_year+11)).dropna(dim='year')
+    ramp_down = ds.sel(year=slice(-window,None)).dropna(dim='year')
+
+    branches = ['ramp_up','ramp_down']
+
+    periods = xr.concat(
+        [ramp_up,ramp_down],
+        dim='branch',
+    ).assign_coords({'branch':branches})
+
+    return periods
+
+def compare_gwl_means(ds):
+    """
+    Function to compare the mean values across specific GWL periods
+    """
+    ramp_up = ds.sel(branch='ramp_up').mean(dim='year')
+    ramp_down = ds.sel(branch='ramp_down').mean(dim='year')
+    difference = ramp_down - ramp_up
+    return {'ramp_up':ramp_up, 'ramp_down':ramp_down, 'difference':difference}

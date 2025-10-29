@@ -59,5 +59,5 @@ def load_gwl_years():
 
 def load_equiv_gwls():
     path = os.path.join(data_dir,"processed/revised_gwl/matched_gwls.nc")
-    return = xr.open_dataset(path)
+    return xr.open_dataset(path)
     
