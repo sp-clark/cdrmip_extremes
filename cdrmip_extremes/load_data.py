@@ -35,7 +35,7 @@ def load_tas_anom():
 def load_gsat():
     gsat = {}
     # save gsat
-    gsat_dir = os.path.join(data_dir,'processed/gsat')
+    save_dir = os.path.join(data_dir,'processed/gsat')
     for model in models:
         path = os.path.join(
             save_dir,
@@ -60,4 +60,20 @@ def load_gwl_years():
 def load_equiv_gwls():
     path = os.path.join(data_dir,"processed/revised_gwl/matched_gwls.nc")
     return xr.open_dataset(path)
+
+def load_threshold_data():
+    threshold_data = {model:{} for model in models}
+    save_dir = os.path.join(
+        data_dir,'processed/extremes'
+    )
+    ext_vars = ['heat_thresholds', 'cold_thresholds']
+    for model in models:
+        for var in ext_vars:
+            var_dir = os.path.join(save_dir,var)
+            path = os.path.join(
+                var_dir,
+                f"{model}_{var}.nc"
+            )
+            threshold_data[model][var] = xr.open_dataset(path)
+    return threshold_data
     
