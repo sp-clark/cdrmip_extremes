@@ -21,6 +21,17 @@ def load_raw_tas():
             data[model][expt] = xr.open_dataset(path,drop_variables=['height'])
     return data
 
+def load_tas_concat():
+    
+    save_dir = os.path.join(data_dir,'processed/tas/concatenated')
+    data = {}
+    for model, ds in concat.items():
+        path = os.path.join(
+            save_dir,
+            f"{model}_cdr-reversibility_tas_concat.nc"
+        )
+        data[model] = xr.open_dataset(path)
+
 def load_tas_anom():
     data = {}
     save_dir = os.path.join(data_dir,'processed/tas/anomalies')
@@ -76,4 +87,20 @@ def load_threshold_data():
             )
             threshold_data[model][var] = xr.open_dataset(path)
     return threshold_data
+
+def load_monthly_extreme_data():
+    data = {model:{} for model in models}
+    save_dir = os.path.join(
+        data_dir,'processed/extremes'
+    )
+    ext_vars = ['max_month_mean','max_month_std_dev','min_month_mean','min_month_std_dev']
+    for model in models:
+        for var in ext_vars:
+            var_dir = os.path.join(save_dir,var)
+            path = os.path.join(
+                var_dir,
+                f"{model}_{var}.nc"
+            )
+            data[model][var] = xr.open_dataarray(path)
+    return data
     

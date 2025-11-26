@@ -8,13 +8,15 @@ def monthly_extrema(da):
     Returns the months of maximum and minimum temperature for each grid cell
     """
     grouped = da.groupby('time.month').mean('time')
-    return grouped.idxmax('month'), grouped.idxmin('month')
+    extrema = xr.concat(
+        [grouped.idxmax('month'), grouped.idxmin('month')],
+        dim='extrema'
+    ).assign_coords({'extrema':['max','min']}).rename({'tas':'month'})
+    return extrema
 
 def monthly_extrema_dt(ds:xr.Dataset) -> xr.Dataset:
     if 'tas' in ds:
-        max_months, min_months = monthly_extrema(ds)
-        extrema = xr.concat([max_months,min_months],dim='extrema').assign_coords({'extrema':['max','min']}).rename({'tas':'month'})
-        return extrema
+        return monthly_extrema(ds)
     else:
         return ds
 
@@ -77,3 +79,34 @@ def cold_extreme_thresholds(min_mon_means, std_devs):
     thresholds = xr.merge([thresholds1, thresholds2, thresholds3])
             
     return thresholds
+
+
+def calculate_exceedances(monthly_temps,ext_thresholds,ext_type):
+
+    years =monthly_temps.count(dim='year').mean().values
+    
+    # Now find which grid-cells feature extreme events for each year
+    if ext_type == 'heat':
+        exceedances1 = monthly_temps.where(monthly_temps > ext_thresholds.threshold1)
+        exceedances2 = monthly_temps.where(monthly_temps > ext_thresholds.threshold2)
+        exceedances3 = monthly_temps.where(monthly_temps > ext_thresholds.threshold3)
+    elif ext_type == 'cold':
+        exceedances1 = monthly_temps.where(monthly_temps < ext_thresholds.threshold1)
+        exceedances2 = monthly_temps.where(monthly_temps < ext_thresholds.threshold2)
+        exceedances3 = monthly_temps.where(monthly_temps < ext_thresholds.threshold3)
+    
+    # these three xarrays thus describe those grid-cells where in a given year an extreme heat event is recorded
+    # if no event is recorded in that year, the grid-cell entry will be nan
+    
+    # We are seeking to calculate the proportion of years for each period that feature extreme heat events
+    # thus we are only concerned really with non-nan values, and can calculate how many such values occur for each grid-cell
+    # using xr.count()
+    
+    years_exceeding1 = ((exceedances1.count(dim='year')/years)*100).rename('sigma1') # remembering that we are seeking percentages
+    years_exceeding2 = ((exceedances2.count(dim='year')/years)*100).rename('sigma2') # remembering that we are seeking percentages
+    years_exceeding3 = ((exceedances3.count(dim='year')/years)*100).rename('sigma3') # remembering that we are seeking percentages
+    
+    # merge these into a single dataset for simplicity
+    exceedance_frequencies = xr.merge([years_exceeding1, years_exceeding2, years_exceeding3])
+    
+    return exceedance_frequencies
