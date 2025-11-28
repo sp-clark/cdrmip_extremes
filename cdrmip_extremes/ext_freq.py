@@ -20,6 +20,17 @@ def monthly_extrema_dt(ds:xr.Dataset) -> xr.Dataset:
     else:
         return ds
 
+def select_extreme_month(ds,ext_months):
+    dss = []
+    for ext_type in ['heat','cold']:
+        dss.append(
+            ds.where(
+                ds.time.dt.month==ext_months.sel(extrema=ext_type).month
+            ).groupby('time.year').mean(dim='time')
+        )
+    return xr.concat(dss,dim='extrema')
+    
+
 def extreme_month_means(months,ds):
     """
     Returns gridded xarray specifying mean tas values for the months specified in 
@@ -87,6 +98,7 @@ def calculate_exceedances(monthly_temps,ext_thresholds,ext_type):
     
     # Now find which grid-cells feature extreme events for each year
     if ext_type == 'heat':
+        monthly_temps = monthly_temps.sel(extrema=ext_type)
         exceedances1 = monthly_temps.where(monthly_temps > ext_thresholds.threshold1)
         exceedances2 = monthly_temps.where(monthly_temps > ext_thresholds.threshold2)
         exceedances3 = monthly_temps.where(monthly_temps > ext_thresholds.threshold3)
@@ -110,3 +122,35 @@ def calculate_exceedances(monthly_temps,ext_thresholds,ext_type):
     exceedance_frequencies = xr.merge([years_exceeding1, years_exceeding2, years_exceeding3])
     
     return exceedance_frequencies
+
+
+def calc_agreement(differences):
+    differences_all = xr.concat(
+        list(differences.values()),
+        dim='model',
+        compat='override',
+        coords='minimal'
+    )
+    
+    # find areas where there are positive or negative changes
+    difference_pos = xr.where(differences_all > 0,1,0)
+    difference_neg = xr.where(differences_all < 0,1,0)
+    
+    # find fraction of models agreeing on sign being positive by taking mean across models
+    agreement_pos = difference_pos.mean(dim='model')
+    # find fraction agreeing on sign being negative
+    agreement_neg = difference_neg.mean(dim='model')
+    
+    # areas where 6/8 models agree sign is positive or where 6/8 agree that sign is negative
+    agreement_all = xr.where(agreement_pos>=0.75,1,0) + xr.where(agreement_neg>=0.75,1,0)
+    agreement = xr.where(agreement_all !=0,1,np.nan)
+
+    return agreement
+def calc_gwl_differences(frequencies):
+    differences = {}
+    for model in frequencies.keys():
+        ramp_up = frequencies[model].sel(branch='ramp_up')
+        ramp_down = frequencies[model].sel(branch='ramp_down')
+        differences[model] = ramp_down - ramp_up
+    agreement = calc_agreement({model:difference for model, difference in differences.items() if model != 'Multi-Model Median'})
+    return differences, agreement
