@@ -7,9 +7,9 @@ def monthly_extrema(da):
     """
     Returns the months of maximum and minimum temperature for each grid cell
     """
-    grouped = da.groupby('time.month').mean('time')
+    grouped = da.groupby('time.month').mean(dim='time')
     extrema = xr.concat(
-        [grouped.idxmax('month'), grouped.idxmin('month')],
+        [grouped.idxmax(dim='month'), grouped.idxmin(dim='month')],
         dim='extrema'
     ).assign_coords({'extrema':['max','min']}).rename({'tas':'month'})
     return extrema
@@ -103,6 +103,7 @@ def calculate_exceedances(monthly_temps,ext_thresholds,ext_type):
         exceedances2 = monthly_temps.where(monthly_temps > ext_thresholds.threshold2)
         exceedances3 = monthly_temps.where(monthly_temps > ext_thresholds.threshold3)
     elif ext_type == 'cold':
+        monthly_temps = monthly_temps.sel(extrema=ext_type)
         exceedances1 = monthly_temps.where(monthly_temps < ext_thresholds.threshold1)
         exceedances2 = monthly_temps.where(monthly_temps < ext_thresholds.threshold2)
         exceedances3 = monthly_temps.where(monthly_temps < ext_thresholds.threshold3)

@@ -73,6 +73,16 @@ def calc_anomaly(
     # subtract reference from ds
     anom = ds - ref
     return anom
+    
+def rolling(ds,window,time_dim='year'):
+    if time_dim != 'year':
+        ds = ds.groupby('time.year').mean(dim='time')
+    return ds.rolling(year=window,center=True,min_periods=1).mean()
+
+def peak_warming(ds):
+    peak = np.round(ds.max(dim='year'),2)
+    peak_year = int(ds.idxmax(dim='year'))
+    return peak, peak_year
 
 def extract_gwl_period(ds, gwl_years, window, time_dim='year'):
     """
@@ -110,8 +120,8 @@ def extract_gwl_period(ds, gwl_years, window, time_dim='year'):
         periods = []
         for year in years:
             start = year - (window - 1) // 2
-            end = year + (window + 1) // 2
-            ds_window = ds.isel(year=slice(start, end)).dropna(dim='year')
+            end = year + (window - 1) // 2
+            ds_window = ds.sel(year=slice(start, end)).dropna(dim='year')
             periods.append(ds_window)
         return xr.concat(periods, dim='gwl').assign_coords(gwl=gwls)
 
@@ -150,5 +160,28 @@ def compare_gwl_means(ds):
     ramp_down = ds.sel(branch='ramp_down').mean(dim='year')
     difference = ramp_down - ramp_up
     return {'ramp_up':ramp_up, 'ramp_down':ramp_down, 'difference':difference}
+
+def calc_agreement(differences):
+    differences_all = xr.concat(
+        list(differences.values()),
+        dim='model',
+        compat='override',
+        coords='minimal'
+    )
+    
+    # find areas where there are positive or negative changes
+    difference_pos = xr.where(differences_all > 0,1,0)
+    difference_neg = xr.where(differences_all < 0,1,0)
+    
+    # find fraction of models agreeing on sign being positive by taking mean across models
+    agreement_pos = difference_pos.mean(dim='model')
+    # find fraction agreeing on sign being negative
+    agreement_neg = difference_neg.mean(dim='model')
+    
+    # areas where 6/8 models agree sign is positive or where 6/8 agree that sign is negative
+    agreement_all = xr.where(agreement_pos>=0.75,1,0) + xr.where(agreement_neg>=0.75,1,0)
+    agreement = xr.where(agreement_all !=0,1,np.nan)
+
+    return agreement
 
 

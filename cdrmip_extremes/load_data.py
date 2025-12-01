@@ -56,6 +56,17 @@ def load_gsat():
         gsat[model] = xr.open_dataarray(path)
     return gsat
 
+def load_sat_difference(period):
+    save_dir = os.path.join(data_dir,'processed/tas',period)
+    data = {}
+    for model in models:
+        path = os.path.join(
+            save_dir,
+            f"{model}_{period}_difference.nc"
+        )
+        data[model] = xr.open_dataset(path)
+    return data
+
 def load_gwl_years():
     save_dir = os.path.join(
         data_dir,"processed/gwl_years"
@@ -140,5 +151,18 @@ def load_ext_freq_data():
             data[model][var] = xr.open_dataset(path)
         
     return data
-            
+
+def load_amoc():
+    amoc_dir = os.path.join(data_dir,'processed/amoc')
+    amoc_data = {model:{} for model in models}
+    for model in models:
+        path = os.path.join(amoc_dir,f"{model}_amoc_26N.nc")
+        path_pi = os.path.join(amoc_dir,f"{model}_amoc_26N_piControl.nc")
+        amoc = xr.open_dataarray(path).groupby('time.year').mean(dim='time')
+        amoc_piControl = xr.open_dataarray(path_pi).groupby('time.year').mean(dim='time')
+        amoc_data[model]['amoc_26N'] = amoc
+        amoc_data[model]['amoc_piControl'] = amoc_piControl
+        amoc_data[model]['anom'] =  amoc - amoc_piControl.mean(dim='year')
+        amoc_data[model]['std_dev'] = amoc_piControl.std(dim='year')
+    return amoc_data
     
