@@ -140,8 +140,8 @@ def extract_equiv_gwl_period(ds,final_gwl,exceed_year,window,time_dim='year'):
         ds = ds.groupby('time.year').mean(dim='time')
         
     # extract final 21-year period and equivalent ramp-up gwl period from ds
-    ramp_up = ds.sel(year=slice(exceed_year-10,exceed_year+11)).dropna(dim='year')
-    ramp_down = ds.sel(year=slice(-window,None)).dropna(dim='year')
+    ramp_up = ds.sel(year=slice(exceed_year-10,exceed_year+10)).dropna(dim='year')
+    ramp_down = ds.sel(year=slice((340-window),339)).dropna(dim='year')
 
     branches = ['ramp_up','ramp_down']
 

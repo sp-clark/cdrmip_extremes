@@ -81,7 +81,7 @@ def load_gwl_years():
     return gwl_years
 
 def load_equiv_gwls():
-    path = os.path.join(data_dir,"processed/revised_gwl/matched_gwls.nc")
+    path = os.path.join(data_dir,"processed/gwl_years/matched_gwls.nc")
     return xr.open_dataset(path)
 
 def load_threshold_data():
@@ -126,7 +126,7 @@ def load_monthly_extreme_data(ext_vars=None):
                 data[model][var] = xr.open_dataarray(path)
     return data
 
-def load_ext_freq_data():
+def load_ext_freq_data(final=False):
     model_list = ['Multi-Model Median'] + models
     data = {model:{} for model in model_list}
     save_dir = os.path.join(
@@ -134,22 +134,56 @@ def load_ext_freq_data():
     )
 
     for var in ['cold_exceedances','heat_exceedances']:
-        var_dir = os.path.join(save_dir,var)
-        path = os.path.join(
-            var_dir,
-            f"median_{var}.nc"
-        )
+        if final:
+            var_dir = os.path.join(save_dir,f'{var}_final')
+            path = os.path.join(
+                var_dir,
+                f"median_{var}_final.nc"
+            )
+        else:
+            var_dir = os.path.join(save_dir,var)
+            path = os.path.join(
+                var_dir,
+                f"median_{var}.nc"
+            )
         data['Multi-Model Median'][var] = xr.open_dataset(path)
 
     for model in models:
         for var in ['cold_exceedances','heat_exceedances']:
-            var_dir = os.path.join(save_dir,var)
-            path = os.path.join(
-                var_dir,
-                f"{model}_{var}.nc"
-            )
+            if final:
+                var_dir = os.path.join(save_dir,f'{var}_final')
+                path = os.path.join(
+                    var_dir,
+                    f"{model}_{var}_final.nc"
+                )
+            else:
+                var_dir = os.path.join(save_dir,var)
+                path = os.path.join(
+                    var_dir,
+                    f"{model}_{var}.nc"
+                )
             data[model][var] = xr.open_dataset(path)
         
+    return data
+
+def load_ext_month_tas(final=False):
+    data = {}
+    if final:
+        save_dir = os.path.join(
+            data_dir,'processed/extremes/extreme_month_tas_final'
+        )
+        period='final'
+    else:
+        save_dir = os.path.join(
+            data_dir,'processed/extremes/extreme_month_tas'
+        )
+        period='gwls'
+    for model in models:
+        path = os.path.join(
+            save_dir,
+            f"{model}_extreme_month_tas_{period}.nc"
+        )
+        data[model] = xr.open_dataset(path)
     return data
 
 def load_amoc():
