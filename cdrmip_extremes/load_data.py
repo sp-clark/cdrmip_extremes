@@ -166,6 +166,32 @@ def load_ext_freq_data(final=False):
         
     return data
 
+def load_ext_freq_piControl():
+    model_list = ['Multi-Model Median'] + models
+    data = {model:{} for model in model_list}
+    save_dir = os.path.join(
+        data_dir,'processed/extremes'
+    )
+
+    for var in ['cold_exceedances','heat_exceedances']:
+        var_dir = os.path.join(save_dir,f'{var}_piControl')
+        path = os.path.join(
+            var_dir,
+            f"median_{var}_piControl.nc"
+        )
+        data['Multi-Model Median'][var] = xr.open_dataset(path)
+
+    for model in models:
+        for var in ['cold_exceedances','heat_exceedances']:
+            var_dir = os.path.join(save_dir,f'{var}_piControl')
+            path = os.path.join(
+                var_dir,
+                f"{model}_{var}_piControl.nc"
+            )
+            data[model][var] = xr.open_dataset(path)
+        
+    return data
+
 def load_ext_month_tas(final=False):
     data = {}
     if final:
