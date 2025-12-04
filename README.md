@@ -1,7 +1,6 @@
 # CDRMIP Extremes #
 This repository comprises the necessary code to reproduce the analysis of Clark et al. (submitted) examining changes in monthly temperature extremes within the Carbon Dioxide Removal Model Intercomparison Project (CDRMIP) Tier 1 experiment. The repository has the following structure:
 
-
 ├── cdrmip_extremes
 │   ├── configs.py
 │   ├── ext_freq.py
@@ -10,18 +9,7 @@ This repository comprises the necessary code to reproduce the analysis of Clark 
 │   ├── load_esgf.py
 │   ├── plotting
 │   │   ├── plot_extremes.py
-│   │   ├── plot_sat.py
-│   │   └── __pycache__
-│   ├── __pycache__
-│   │   ├── configs.cpython-311.pyc
-│   │   ├── ext_freq.cpython-311.pyc
-│   │   ├── extremes.cpython-311.pyc
-│   │   ├── gsat.cpython-311.pyc
-│   │   ├── __init__.cpython-311.pyc
-│   │   ├── load_data.cpython-311.pyc
-│   │   ├── load_esgf.cpython-311.pyc
-│   │   ├── sat.cpython-311.pyc
-│   │   └── utils.cpython-311.pyc
+│   │   └── plot_sat.py
 │   ├── sat.py
 │   └── utils.py
 ├── data
