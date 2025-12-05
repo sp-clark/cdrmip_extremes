@@ -226,6 +226,20 @@ def load_amoc():
         amoc_data[model]['std_dev'] = amoc_piControl.std(dim='year')
     return amoc_data
 
+def load_mrsos():
+    # load
+    save_dir = os.path.join(data_dir,'raw/mrsos/')
+    data = {model:{} for model in models}
+    for expt in expts[:2]:
+        expt_dir = os.path.join(save_dir,expt)
+        for model in models:
+            path = os.path.join(
+                expt_dir,
+                f"{model}_{expt}_mrsos.nc"
+            )
+            data[model][expt] = xr.open_dataarray(path)
+    return data
+
 def load_siconc():
     # load
     save_dir = os.path.join(data_dir,'raw/siconc/')
