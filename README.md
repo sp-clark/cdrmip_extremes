@@ -1,4 +1,4 @@
-# CDRMIP Extremes #
+# cdrmip_extremes #
 This repository comprises the necessary code to reproduce the analysis of Clark et al. (submitted) examining changes in monthly temperature extremes within the Carbon Dioxide Removal Model Intercomparison Project (CDRMIP) Tier 1 experiment. 
 
 The repository has the following structure:
