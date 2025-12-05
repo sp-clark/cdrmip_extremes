@@ -121,7 +121,7 @@ def extract_gwl_period(ds, gwl_years, window, time_dim='year'):
         for year in years:
             start = year - (window - 1) // 2
             end = year + (window - 1) // 2
-            ds_window = ds.sel(year=slice(start, end)).dropna(dim='year')
+            ds_window = ds.sel(year=slice(start, end))#.dropna(dim='year')
             periods.append(ds_window)
         return xr.concat(periods, dim='gwl').assign_coords(gwl=gwls)
 

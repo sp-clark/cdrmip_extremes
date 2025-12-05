@@ -225,4 +225,29 @@ def load_amoc():
         amoc_data[model]['anom'] =  amoc - amoc_piControl.mean(dim='year')
         amoc_data[model]['std_dev'] = amoc_piControl.std(dim='year')
     return amoc_data
+
+def load_siconc():
+    # load
+    save_dir = os.path.join(data_dir,'raw/siconc/')
+    data = {model:{} for model in models}
+    for expt in expts[:2]:
+        expt_dir = os.path.join(save_dir,expt)
+        for model in models:
+            path = os.path.join(
+                expt_dir,
+                f"{model}_{expt}_siconc.nc"
+            )
+            data[model][expt] = xr.open_dataarray(path)
+    return data
+
+def load_areacello():
+    save_dir = os.path.join(data_dir,'raw/Ofx')
+    data = {}
+    for model in models:
+        path = os.path.join(
+            save_dir,
+            f"{model}_areacello.nc"
+        )
+        data[model] = xr.open_dataarray(path)
+    return data
     
