@@ -24,7 +24,7 @@ The repository has the following structure:
     conda activate cdrmip_extremes
     ```
 3. To perform the analysis, the required data must first be pre-downloaded from the Earth System Grid Federation (ESGF, https://aims2.llnl.gov/search) and stored within the ```data/raw``` subdirectory. The necessary ESGF files are described in Clark et al. (submitted). Note that Surface Air Temperature ('tas') data should be regridded for each model onto a common 2ºC by 2ºC latitude-longitude grid prior to performing the analysis. This can be done, for instance, through cdo operators (https://code.mpimet.mpg.de/projects/cdo).
-4. Run through the notebooks within the ```notebooks``` subdirectory sequentially. Each notebook will load in the necessary modules from ```cdrmip_extremes``` and the required data from the ```data``` subdirectory.
+4. Run through the notebooks within the ```notebooks``` subdirectory sequentially. Each notebook will load in the necessary modules from ```cdrmip_extremes``` and the required data from the ```data``` subdirectory. 'Processed' data that is needed to run subsequent notebooks will be stored within ```data/processed``` and loaded in when required when running each notebook.
 
 
 
