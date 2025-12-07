@@ -3,7 +3,7 @@ import os
 import sys
 from pathlib import Path
 
-data_dir = Path('/g/data/if69/sc1326/CDRMIP/data')
+data_dir = Path(__file__).resolve().parent.parent / "data"
 
 models = ["ACCESS-ESM1-5","CanESM5","CESM2", "CNRM-ESM2-1","GFDL-ESM4","MIROC-ES2L","NorESM2-LM","UKESM1-0-LL"]
 
