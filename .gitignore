@@ -13,7 +13,7 @@ __pycache__/
 
 # data file
 /data/
-
+data
 __pycache__/
 *.pyc
 
