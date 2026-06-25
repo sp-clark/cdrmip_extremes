@@ -1,6 +1,7 @@
 import xarray as xr
 import numpy as np
 import cftime
+from collections import defaultdict
 
 
 
@@ -80,7 +81,7 @@ def rolling(ds,window,time_dim='year'):
     return ds.rolling(year=window,center=True,min_periods=1).mean()
 
 def peak_warming(ds):
-    peak = np.round(ds.max(dim='year'),2)
+    peak = np.round(ds.max(dim='year').item(),2)
     peak_year = int(ds.idxmax(dim='year'))
     return peak, peak_year
 
@@ -184,4 +185,7 @@ def calc_agreement(differences):
 
     return agreement
 
-
+def defaultdict_to_dict(d):
+    if isinstance(d, defaultdict):
+        d = {k: defaultdict_to_dict(v) for k, v in d.items()}
+    return d

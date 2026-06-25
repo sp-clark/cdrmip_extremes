@@ -151,40 +151,6 @@ def find_CMIP_files(activity_id=None,
                                                 'version': latest_version.name,
                                                 'path': netcdf_files
                                             })
-                                    # for grid_label in var_path.iterdir():
-
-                                    #     if not grid_label.is_dir():
-                                    #         continue
-
-                                    #     versions = [
-                                    #         v for v in grid_label.iterdir()
-                                    #         if v.is_dir() and v.name != 'files'
-                                    #     ]
-
-                                    #     if not versions:
-                                    #         continue
-
-                                    #     latest_version = max(
-                                    #         versions,
-                                    #         key=lambda v: v.stat().st_mtime
-                                    #     )
-
-                                    #     netcdf_files = sorted(str(f) for f in latest_version.glob("*.nc"))
-
-                                    #     if netcdf_files:
-                                    #         results.append({
-                                    #             'activity_id': act,
-                                    #             'institution_id': inst,
-                                    #             'source_id': model,
-                                    #             'experiment_id': expt,
-                                    #             'member_id': mem,
-                                    #             'table_id': table,
-                                    #             'variable_id': var,
-                                    #             'grid_label': grid_label.name,
-                                    #             'version': latest_version.name,
-                                    #             'path': netcdf_files
-                                    #         })
-                                
 
     return pd.DataFrame(results)
 
@@ -240,6 +206,10 @@ def search_and_load_parent(child_ds,chunks,vars_to_drop):
                 variable_id = variable_id,
                 grid_label=grid_label,
     )
+    if len(search) == 0:
+        print(f"No parent found for {source_id} {experiment_id} {variant_label} "
+              f"(parent: {parent_source_id} {parent_experiment_id} {parent_variant_label}) — skipping")
+        return None
     print(f"Loading {parent_source_id} {parent_experiment_id} {parent_variant_label}")
     path = search['path'][0]
     parent_ds = xr.open_mfdataset(

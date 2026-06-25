@@ -192,18 +192,18 @@ def load_ext_freq_piControl():
         
     return data
 
-def load_ext_month_tas(final=False):
+def load_ext_month_tas(period,final=False):
     data = {}
     if final:
         save_dir = os.path.join(
             data_dir,'processed/extremes/extreme_month_tas_final'
         )
-        period='final'
+        # period='final'
     else:
         save_dir = os.path.join(
             data_dir,'processed/extremes/extreme_month_tas'
         )
-        period='gwls'
+        # period='gwls'
     for model in models:
         path = os.path.join(
             save_dir,
@@ -264,4 +264,11 @@ def load_areacello():
         )
         data[model] = xr.open_dataarray(path)
     return data
+
+def load_fx():
+    save_dir = data_dir / 'raw' / 'fx'
+    areacella = xr.open_dataset(f"{save_dir}/areacella.nc")
+    mask_land = xr.open_dataset(f"{save_dir}/mask_land.nc")
+    mask_ocean = xr.open_dataset(f"{save_dir}/mask_ocean.nc")
+    return areacella, mask_land, mask_ocean
     

@@ -5,6 +5,8 @@ import sys
 import cftime
 import xesmf as xe
 
+from cdrmip_extremes.configs import data_dir, proc_dir
+
 # 180 lon, 90 lat grid
 lon_new = np.linspace(-179.5, 179.5, 180)
 lat_new = np.linspace(-89.5, 89.5, 90)
@@ -15,12 +17,6 @@ grid_out = xr.Dataset(
         "lon": (["lon"], lon_new),
     }
 )
-# def regrid_to_common(ds, varname, method='bilinear'):
-#     # Create regridder
-#     regridder = xe.Regridder(ds, grid_out, method, periodic=True, reuse_weights=False)
-#     # Regrid variable
-#     ds_out = regridder(ds)
-#     return ds_out
 
 _regridder_cache = {}
 
