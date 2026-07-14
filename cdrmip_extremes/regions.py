@@ -25,8 +25,8 @@ def regionmask_average(ds,land_mask,ocean_mask,surface):
     weights = np.cos(np.deg2rad(ds.lat))
     
     regional = (ds).weighted(mask_3D*weights).mean(dim=('lat','lon'))
-    land_regional = (ds*ocean_mask).weighted(mask_3D*weights).mean(dim=('lat','lon'))
-    ocean_regional = (ds*land_mask).weighted(mask_3D*weights).mean(dim=('lat','lon'))
+    land_regional = (ds.where(land_mask==1)).weighted(mask_3D*weights).mean(dim=('lat','lon'))
+    ocean_regional = (ds.where(ocean_mask==1)).weighted(mask_3D*weights).mean(dim=('lat','lon'))
 
     return regional, land_regional, ocean_regional
 
@@ -40,7 +40,7 @@ def zonal_average(ds, lower_bound, upper_bound, mask=None):
     subset = ds.where((ds.lat >= lower_bound) & (ds.lat < upper_bound))
     
     if mask is not None:
-        subset = subset * mask
+        subset = subset.where(mask==1)
         
     weights = np.cos(np.deg2rad(ds.lat))
     
@@ -56,3 +56,33 @@ def get_zonal_averages(ds,mask=None):
         zonal_avg = zonal_average(ds,bounds[0],bounds[1],mask)
         zonal_avgs[zone] = zonal_avg
     return zonal_avgs
+
+def zonal_subset(ds, lower_bound, upper_bound, mask=None):
+    """Return ds masked to lats in [lower_bound, upper_bound), optionally applying a mask."""
+    subset = ds.where((ds.lat >= lower_bound) & (ds.lat < upper_bound))
+    if mask is not None:
+        subset = subset.where(mask == 1)
+    return subset
+
+def get_zonal_subsets(ds, mask=None):
+    return {zone: zonal_subset(ds, *bounds, mask) for zone, bounds in zonal_dict.items()}
+
+def area_fraction_above(subset, threshold=0):
+    """Percent of (weighted) region area where each variable exceeds threshold.
+
+    Works on the NaN-masked output of zonal_subset; NaN cells are
+    excluded from both numerator and denominator.
+    """
+    weights = np.cos(np.deg2rad(subset.lat))
+    indicator = (subset > threshold).where(subset.notnull())  # 1/0 inside region, NaN outside
+    return indicator.weighted(weights).mean(dim=('lat', 'lon')) * 100
+
+def area_fraction_below(subset, threshold=0):
+    """Percent of (weighted) region area where each variable exceeds threshold.
+
+    Works on the NaN-masked output of zonal_subset; NaN cells are
+    excluded from both numerator and denominator.
+    """
+    weights = np.cos(np.deg2rad(subset.lat))
+    indicator = (subset < threshold).where(subset.notnull())  # 1/0 inside region, NaN outside
+    return indicator.weighted(weights).mean(dim=('lat', 'lon')) * 100
