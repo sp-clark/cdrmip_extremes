@@ -27,15 +27,7 @@ def get_ds(data, *keys):
 
 
 def as_dataarray(node, varname=None):
-    """Resolve a DataTree node / Dataset / DataArray down to a plottable DataArray.
 
-    - DataTree node -> use its `.ds`
-    - Dataset with `varname` given -> ds[varname]
-    - Dataset with exactly one data variable -> that variable, auto-selected
-    - Dataset with multiple variables and no `varname` -> raises, since it's
-      ambiguous which one to plot
-    - DataArray -> returned as-is
-    """
     ds = node.ds if hasattr(node, "ds") else node
     if hasattr(ds, "data_vars"):  # it's a Dataset
         if varname is not None:
@@ -55,11 +47,9 @@ def average_over_dim(items, dim):
 
 
 def average_leaf_datasets(node, dim="leaf"):
-    """Average over all leaf datasets under a DataTree node.
+    """
+    Average over all leaf datasets under a DataTree node.
 
-    Useful when a model node has children spanning e.g. experiment and
-    ensemble member, and you want a single Dataset averaged across all of
-    them.
     """
     leaf_datasets = [n.ds for n in node.subtree if n.has_data]
     return average_over_dim(leaf_datasets, dim)
@@ -101,27 +91,8 @@ def make_geo_grid(n_rows, n_cols, figsize=None, projection=None, sharey=True):
 
 def plot_map_panel(ax, ds, cmap, norm=None, vmin=None, vmax=None, title=None, title_fontsize=16,
                     wrap_cyclic=False, method="pcolormesh", extent=(0, 360, -90, 90)):
-    """Plot a single map panel with coastlines. Returns the mesh/image (for colorbars).
-
-    Pass either `norm` (e.g. from `make_norm`) for discrete/boundary colour
-    scales, or `vmin`/`vmax` for a plain continuous scale. If `norm` is
-    given, `vmin`/`vmax` are ignored (matplotlib's own behaviour).
-
-    method : {'pcolormesh', 'imshow'}
-        'pcolormesh' (default) does an exact per-cell transform via
-        cartopy. 'imshow' instead warps the whole array as a single image
-        -- coarser, but immune to the cartopy pcolormesh seam-wrapping bug
-        (see wrap_cyclic below), which tends to surface on fields with
-        NaNs near the antimeridian (e.g. multi-model medians). `extent` is
-        only used in 'imshow' mode.
-
-    wrap_cyclic : bool
-        Only applies to 'pcolormesh'. If True, close the longitude seam
-        with cartopy's add_cyclic_point before plotting -- needed for grids
-        that don't explicitly reach 360 (e.g. a CDO-style 0..358 grid).
-        Without this, cartopy's pcolormesh seam-wrapping can occasionally
-        raise "TypeError: 'GeometryCollection' object is not subscriptable".
-        Off by default since most existing recipes don't need it.
+    """
+    Plot a single map panel with coastlines. Returns the mesh/image (for colorbars).
     """
     if method == "imshow":
         plot_data = ds
@@ -148,12 +119,8 @@ def plot_map_panel(ax, ds, cmap, norm=None, vmin=None, vmax=None, title=None, ti
 
 
 def add_stippling(ax, da, hatch_color=(0, 0, 0, 0.5), hatches=("/////",)):
-    """Overlay significance/agreement hatching on a single axis.
-
-    da : a single 2D (lat, lon) DataArray -- already selected down to one
-    threshold/gwl/etc by the caller (unlike the old version, this no longer
-    takes a Dataset + varname, since callers now generally already have a
-    plain DataArray in hand after indexing).
+    """
+    Overlay significance/agreement hatching on a single axis.
     """
     lon = np.array(da.lon)
     lat = np.array(da.lat)
@@ -170,14 +137,8 @@ def add_stippling(ax, da, hatch_color=(0, 0, 0, 0.5), hatches=("/////",)):
 
 def add_colorbar(fig, mappable, rect=None, label=None, ax=None, fontsize=16,
                   tick_fontsize=14, ticks=None, ticklabels=None, **kwargs):
-    """Add a colorbar, either in a custom-positioned axis or attached to an
-    existing set of axes.
-
-    rect : [left, bottom, width, height] -> places the colorbar in its own
-           axis at this position (use for precise custom layouts).
-    ax   : existing Axes / array of Axes -> attaches a colorbar sized to
-           span them (use for "one colorbar for the whole grid").
-    Exactly one of `rect` / `ax` should be given.
+    """
+    Add a colorbar
     """
     if rect is not None:
         cbar_ax = fig.add_axes(rect)
@@ -205,17 +166,14 @@ def label_panels(axes, labels=None):
 
 
 def hide_unused_axes(axes, n_used):
-    """Hide any axes in a grid beyond the number of plots actually drawn."""
+    """Hide any axes in a grid beyond those actually used."""
     for ax in axes.flat[n_used:]:
         ax.set_visible(False)
 
 
 def save_figure(fig, fig_dir, folder, file_name, dpi=300, bbox_inches="tight",pil_kwargs={"quality": 95}):
     """
-    Save a figure to fig_dir/folder/file_name, creating the folder if needed.
-
-    folder : {'main', 'supplementary'} (or any other subfolder name you use)
-    file_name : str, including extension, e.g. 'figure1.png'
+    Save a figure to fig_dir/folder/file_name
     """
     from pathlib import Path
     out_dir = Path(fig_dir) / folder
@@ -263,29 +221,7 @@ def plot_ext_freq_diff(differences, expt, ext_type, threshold, levels, label, ti
     """
     Plot a per-model difference map (e.g. branch_differences: ramp_down -
     ramp_up) at a given GWL/threshold, one panel per model in a grid.
- 
-    differences : nested dict { model: { expt: { ext_type: ds } } }
-                  ds has sigma1/sigma2/sigma3, dims (gwl, lat, lon)
-    expt, ext_type, threshold : select which data to plot
-    gwl           : float, optional. The global warming level to select via
-                    .sel(gwl=gwl) -- for crossing_years-based data where all
-                    models share the same fixed GWL targets.
-    period        : optional, any truthy value. If set, selects via
-                    .isel(gwl=0) -- for gwl_matching-based data where each
-                    model has a single but differently-labelled gwl entry.
-                    Exactly one of gwl / period should be given.
-    levels        : currently unused for colour mapping (continuous vmin/vmax
-                    is used) -- kept in case you want to switch to discrete
-                    BoundaryNorm later.
-    label         : top-left corner label (e.g. a panel letter/identifier)
-    title         : short name for the variable being plotted, used in suptitle
-    exclude_models : model keys to skip
-    n_cols        : number of columns in the model grid (rows auto-computed)
-    fig_dir, folder, file_name : optional save path
- 
-    Uses imshow rather than pcolormesh -- deliberate, since multi-model/
-    difference fields are exactly where the cartopy pcolormesh seam-wrapping
-    bug tends to surface with NaNs.
+
     """
     if gwl is None and period is None:
         raise ValueError("Provide either gwl (crossing_years-based) or period (gwl_matching-based).")
@@ -364,20 +300,7 @@ def plot_ext_freq_diff_corr_all_thresholds(differences, expt, ext_type, levels, 
     """
     Like `plot_ext_freq_diff_corr`, but for a single ext_type plots all
     three sigma thresholds in one figure instead of just one.
- 
-    Layout: one 2-row block per threshold (sigma1 on top, then sigma2, then
-    sigma3), each block using `n_cols` columns of model panels -- so the
-    full grid is 6 x n_cols, and each threshold can show up to 2 * n_cols
-    models (n_cols=3 -> 6 models/threshold).
- 
-    differences, expt, ext_type, label, title, vmin, vmax, gwl, period,
-    exclude_models, fig_dir, folder, file_name, corr_dict : see
-    `plot_ext_freq_diff_corr` -- identical meaning, just no `threshold` arg
-    since all three thresholds are plotted here.
-    levels : currently unused (continuous vmin/vmax is used) -- kept for
-              parity with `plot_ext_freq_diff_corr`.
-    n_cols : columns per threshold block (default 3). Each block is always
-             exactly 2 rows tall.
+
     """
     if gwl is None and period is None:
         raise ValueError("Provide either gwl (crossing_years-based) or period (gwl_matching-based).")
@@ -479,41 +402,6 @@ def plot_ext_freq(exceedances, differences, agreement, model, expt, ext_type, gw
     Plot a 3x3 grid: rows = sigma thresholds, columns = ramp up / ramp down /
     difference, with stippling for agreement on the difference column.
 
-    exceedances : nested dict { model: { expt: { ext_type: ds } } }
-                  ds has 'sigma1'/'sigma2'/'sigma3', dims (branch, gwl, lat, lon)
-    differences : nested dict { model: { expt: { ext_type: ds } } }
-                  ramp_down - ramp_up, dims (gwl, lat, lon)
-    agreement   : nested dict { expt: { ext_type: ds } }
-                  dims (gwl, lat, lon)
-    model, expt, ext_type : str, select which node to plot
-    gwl           : float, optional. The global warming level to select via
-                    .sel(gwl=gwl) -- used for crossing_years-based data,
-                    where every model shares the same fixed GWL targets
-                    (1.5/2.0/3.0 etc).
-    period        : optional, any truthy value. If set, selects via
-                    .isel(gwl=0) instead of gwl -- used for gwl_matching-
-                    based data, where each model/member matched a
-                    *different* GSAT level (its own late-period mean), so
-                    there's no single gwl value valid across all of them;
-                    each dataset just has one (differently-labelled) gwl
-                    entry, and isel(gwl=0) picks "the only one there is"
-                    regardless of its value. Exactly one of `gwl`/`period`
-                    should be given.
-    model_name    : optional display name for the title (defaults to `model`)
-    discrete      : bool, if True use BoundaryNorm colormaps (with under/over
-                    extend colors on the difference panels) instead of
-                    continuous Normalize colormaps
-    levels        : array-like, optional override for the frequency-of-occurrence
-                    boundaries (discrete mode) / range (continuous mode).
-                    Defaults to EXT_TYPE_PARAMS[ext_type]['levels'].
-    levels_diff   : array-like, optional override for the difference colorbar
-                    boundaries/range. Defaults to EXT_TYPE_PARAMS[ext_type]['levels_diff'].
-    wrap_cyclic   : bool, default True -- see plot_map_panel's docstring.
-                    Set False if your grid already explicitly closes at 360.
-    fig_dir, folder, file_name : optional -- if all three are given, the
-                    figure is saved to fig_dir/folder/file_name (folder is
-                    typically 'main' or 'supplementary', but any subfolder
-                    name works). Folder is created if needed.
     """
     if gwl is None and period is None:
         raise ValueError("Provide either gwl (crossing_years-based) or period (gwl_matching-based).")
@@ -624,9 +512,8 @@ def plot_ext_freq(exceedances, differences, agreement, model, expt, ext_type, gw
 
 def plot_gwl_diff(data_dict, expt, varname=None, n_cols=3, levels=None, cmap=None,
                    cbar_label="SAT difference (°C)", suptitle=None, agreement=None):
-    """...
-    agreement : optional 2D (lat, lon) DataArray; if given, stippled onto the
-                multi-model median panel via add_stippling.
+    """
+
     """
     to_plot = {}
     for model, expt_node in data_dict.items():
@@ -743,11 +630,6 @@ def plot_hottest_coldest_month(extreme_months, extrema, title, n_cols=4, cmap=No
 def plot_pi_stats(ext_dict, variable, cmap, vmin, vmax, cbar_label, title, n_cols=4):
     """Plot a preindustrial statistic, one map per model, averaged across
     ensemble members.
-
-    ext_dict : nested dict, { model: { member: ds } }
-    variable : name of the data variable to plot. Values are converted from
-               Kelvin to Celsius if 'mean' appears in the variable name
-               (mirrors the convention used for PI mean-temperature stats).
     """
     extend = "both" if "mean" in variable else "max"
 
@@ -878,12 +760,7 @@ def plot_ext_freq_diff_stacked(differences, expt, ext_type, panels,
     Stack two (or more) plot_ext_freq_diff grids vertically in one figure,
     one subfigure per entry in `panels`, each with its own suptitle,
     corner label and colorbar.
- 
-    panels : list of dicts, one per stacked grid, each with keys:
-             'threshold' (e.g. 'sigma1'), 'label' (e.g. '(a)'),
-             'title' (short name used in that grid's suptitle).
-    All other arguments are shared across the panels and behave exactly as
-    in plot_ext_freq_diff.
+
     """
     if gwl is None and period is None:
         raise ValueError("Provide either gwl (crossing_years-based) or period (gwl_matching-based).")
@@ -951,21 +828,6 @@ def plot_gsat_timeseries(gsat_rolling, gwl_matching_years, colour_dict,
                          end_marker_year=2190, figsize=(16, 8), legend_ncol=5,
                          fig_dir=None, folder=None, file_name=None):
     """
-    Timeseries of rolling GSAT per model/experiment, with dashed lines at each
-    model's matched GWL, an up-triangle at the ramp-up GWL-matching year and a
-    down-triangle at `end_marker_year` (end of simulation).
- 
-    gsat_rolling : nested dict { model: { expt: ds } }
-                   ds has a 'gsat_rolling' variable with a time dim
-    gwl_matching_years : nested dict { model: { expt: { member: ds } } }
-                   ds has 'gwl_matching_years' (with a 'branch' dim covering
-                   'ramp_up'/'ramp_down') and a scalar 'gwl'; the median is
-                   taken across members
-    colour_dict : { model: colour }
-    end_marker_year : x-position for the end-of-simulation (down-triangle)
-                   marker
-    fig_dir, folder, file_name : optional -- if all three are given, the
-                   figure is saved via save_figure.
     """
     fig, ax = plt.subplots(1, 1, figsize=figsize)
  
@@ -1100,4 +962,188 @@ def plot_reversibility_rel_gsat_normalised(reversibility,reversibility_gsat,wind
     )
     fig.tight_layout()
     plt.show()
+    return fig
+
+# ---------------------------------------------------------------------------
+#  plot combined ext_freq
+# ---------------------------------------------------------------------------
+
+def plot_ext_freq_with_model_diffs(
+    exceedances, differences, agreement,
+    model, expt, ext_type,
+    diff_threshold, diff_vmin, diff_vmax,
+    gwl=None, period=None,
+    model_name=None, discrete=False, levels=None, levels_diff=None,
+    n_cols=4,
+    exclude_models=("multi_model_median", "Multi-Model Median"),
+    diff_label="(d)",
+    diff_title=None,
+    projection=None,
+    suptitle=None, expt_name=None,
+    fig_dir=None, folder=None, file_name=None,
+):
+    """
+    Combine plot_ext_freq (top) and plot_ext_freq_diff (bottom) in one figure.
+
+    """
+    # ---- validation / setup (shared) -------------------------------------
+    if gwl is None and period is None:
+        raise ValueError("Provide either gwl (crossing_years-based) or period (gwl_matching-based).")
+    if model_name is None:
+        model_name = model
+    if expt_name is None:
+        expt_name = expt
+    projection = projection or ccrs.Robinson()
+
+    def _select(da):
+        return da.isel(gwl=0) if period is not None else da.sel(gwl=gwl)
+
+    params = EXT_TYPE_PARAMS[ext_type]
+
+    # ---- how many rows will the bottom (per-model) block need? -----------
+    diff_models = [m for m in differences.keys() if m not in exclude_models]
+    n_plots_bottom = len(diff_models)
+    n_rows_bottom = max(1, math.ceil(n_plots_bottom / n_cols))
+
+    # ---- parent figure split into two stacked subfigures -----------------
+    top_h = 10.0                      # matches plot_ext_freq's figsize height
+    bottom_h = n_rows_bottom * 3.0    # ~ plot_ext_freq_diff's n_rows * 2.85 + slack
+    fig = plt.figure(figsize=(16, top_h + bottom_h + 1.0))
+    sf_top, sf_bottom = fig.subfigures(
+        2, 1, height_ratios=[top_h, bottom_h + 1.0]
+    )
+
+    # =====================================================================
+    # TOP BLOCK  ==  plot_ext_freq()
+    # =====================================================================
+    exceedance = get_ds(exceedances, model, expt, ext_type)
+    diff = get_ds(differences, model, expt, ext_type)
+    agreement_ds = get_ds(agreement, expt, ext_type)
+
+    to_plot = {}
+    for threshold in THRESHOLDS:
+        to_plot[threshold] = {
+            "ramp_up": _select(exceedance[threshold]).sel(branch="ramp_up"),
+            "ramp_down": _select(exceedance[threshold]).sel(branch="ramp_down"),
+            "difference": _select(diff[threshold]),
+        }
+
+    levels1 = levels if levels is not None else params["levels"]
+    levels2 = levels_diff if levels_diff is not None else params["levels_diff"]
+
+    if discrete:
+        cmap1, norm1 = make_norm(levels1, params["cmap1"])
+        cmap2, norm2 = make_norm(levels2, params["cmap2"])
+        cmap2.set_extremes(under=params["diff_under"], over=params["diff_over"])
+    else:
+        cmap1 = plt.get_cmap(params["cmap1"])
+        cmap2 = plt.get_cmap(params["cmap2"])
+        norm1 = Normalize(vmin=levels1[0], vmax=levels1[-1])
+        norm2 = Normalize(vmin=levels2[0], vmax=levels2[-1])
+
+    axes_top = sf_top.subplots(
+        3, 3, subplot_kw={"projection": projection}, squeeze=False, sharey=True,
+    )
+    # leave room at the bottom of the top subfigure for its two colorbars
+    sf_top.subplots_adjust(left=0.06, right=0.97, top=0.90, bottom=0.14,
+                           wspace=0.08, hspace=0.12)
+
+    for row_index, threshold in enumerate(THRESHOLDS):
+        for col_index, key in enumerate(["ramp_up", "ramp_down", "difference"]):
+            ax = axes_top[row_index, col_index]
+            norm, cmap = (norm2, cmap2) if key == "difference" else (norm1, cmap1)
+            plot_map_panel(ax, to_plot[threshold][key], cmap=cmap, norm=norm,
+                           method="imshow", wrap_cyclic=False)
+        axes_top[row_index, 0].annotate(
+            params["threshold_symbs"][row_index], xy=(-0.05, 0.5),
+            xycoords="axes fraction", ha="center", va="center",
+            fontsize=20, rotation=90,
+        )
+
+    if expt == "ssp534-over":
+        axes_top[0][0].set_title("pre-overshoot", fontsize=20)
+        axes_top[0][1].set_title("post-overshoot", fontsize=20)
+        axes_top[0][2].set_title("difference (post-pre)", fontsize=20)
+    elif expt == "1pctCO2-cdr":
+        axes_top[0][0].set_title("Ramp Up", fontsize=20)
+        axes_top[0][1].set_title("Ramp Down", fontsize=20)
+        axes_top[0][2].set_title("Ramp Down - Ramp Up", fontsize=20)
+
+    for row_index, threshold in enumerate(THRESHOLDS):
+        add_stippling(axes_top[row_index][2], _select(agreement_ds[threshold]))
+
+    # panel letters (a)(b)(c) on the top row
+    for ax, lab in zip(axes_top[0], ["(a)", "(b)", "(c)"]):
+        ax.text(0.0, 1.10, lab, transform=ax.transAxes, fontsize=20,
+                va="bottom", ha="left")
+
+    # two horizontal colorbars along the bottom of the TOP subfigure
+    add_colorbar(
+        sf_top, plt.cm.ScalarMappable(norm=norm1, cmap=cmap1),
+        rect=[0.06, 0.07, 0.6, 0.022],
+        label="Frequency of occurrence\n(% of years within window)",
+    )
+    add_colorbar(
+        sf_top, plt.cm.ScalarMappable(norm=norm2, cmap=cmap2),
+        rect=[0.70, 0.07, 0.265, 0.022],
+        label="Change in frequency\n(difference in % of years)",
+        extend="both",
+        ticks=params.get("diff_ticks"),
+        ticklabels=params.get("diff_ticklabels"),
+    )
+
+    # =====================================================================
+    # BOTTOM BLOCK  ==  plot_ext_freq_diff()  (labelled as one panel: (d))
+    # =====================================================================
+    if ext_type == "heat":
+        cmap_d = plt.cm.RdBu_r.copy()
+        cmap_d.set_extremes(under="midnightblue", over="maroon")
+    elif ext_type == "cold":
+        cmap_d = plt.cm.RdBu.copy()
+        cmap_d.set_extremes(under="maroon", over="midnightblue")
+    else:
+        raise ValueError(f"Unknown ext_type: {ext_type}")
+
+    to_plot_bottom = {
+        m: _select(get_ds(differences, m, expt, ext_type)[diff_threshold])
+        for m in diff_models
+    }
+
+    axes_bottom = sf_bottom.subplots(
+        n_rows_bottom, n_cols, subplot_kw={"projection": projection},
+        squeeze=False, sharey=True,
+    )
+    sf_bottom.subplots_adjust(left=0.05, right=0.95, top=0.88, bottom=0.05,
+                              wspace=0.08, hspace=-0.35)
+
+    mesh = None
+    for (m, da), ax in zip(to_plot_bottom.items(), axes_bottom.flat):
+        mesh = plot_map_panel(
+            ax, da, cmap_d, vmin=diff_vmin, vmax=diff_vmax,
+            title=m, title_fontsize=18, method="imshow",
+        )
+    hide_unused_axes(axes_bottom, n_plots_bottom)
+
+    if mesh is not None:
+        add_colorbar(
+            sf_bottom, mesh,
+            rect=[0.1, 0.06, 0.8, 0.04],
+            label="Change in frequency (difference in % of years)",
+            orientation="horizontal", extend="both",
+            fraction=0.02, aspect=20, tick_fontsize=14,
+        )
+
+    # single corner label for the whole bottom block
+    if diff_title is None:
+        diff_title = params["threshold_symbs"][THRESHOLDS.index(diff_threshold)]
+    sf_bottom.text(0.06, 0.85, diff_label, fontsize=20, va="bottom", ha="left")
+    sf_bottom.text(0.5, 0.85,
+                   f"{expt} change in frequency of {diff_title}-level {ext_type} events at {gwl}°C by model",
+                   fontsize=22, va="bottom", ha="center")
+
+    # ---- overall title & save --------------------------------------------
+    if suptitle:
+        fig.suptitle(suptitle, y=1.01, fontsize=22)
+    if fig_dir is not None and folder is not None and file_name is not None:
+        save_figure(fig, fig_dir, folder, file_name)
     return fig

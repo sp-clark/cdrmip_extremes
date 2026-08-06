@@ -123,23 +123,8 @@ def find_matching_gwl_year(gsat_da, window, match_slice, time_dim='year', search
         coords={'gwl':[end_gwl],'branch':['ramp_up','ramp_down']},
         dims=['gwl','branch'])
 
-    # return end_gwl, matching_year
     return da
  
- 
-# def gwl_matched_anomaly_difference(anom_da, post_slice, matching_year,
-#                                     half_window=15, time_dim='year'):
-#     """
-#     Difference between the mean anomaly over `post_slice` and the mean
-#     anomaly over a (2*half_window+1)-year window centred on
-#     `matching_year` -- i.e. how much a field differs between a late-period
-#     GWL and an earlier period at the *same* GSAT level.
-#     """
-#     post_mean = anom_da.sel({time_dim: post_slice}).mean(time_dim)
-#     pre_mean = anom_da.sel(
-#         {time_dim: slice(matching_year - half_window, matching_year + half_window + 1)}
-#     ).mean(time_dim)
-#     return post_mean - pre_mean
 
 def gwl_matched_anomaly_difference(anom_da, post_slice, matching_year,
                                    half_window=None, time_dim='year'):
@@ -295,18 +280,6 @@ def _restore_reduced_coords(reduced, store, reduction):
  
 def reduce_members(member_dt, reduction="median", drop_coords=None):
     """
-    drop_coords : list of str, optional
-        Coordinate names to drop from each member's data before
-        concatenating. Needed for coordinates that are physically
-        different per member and shouldn't be used to align datasets --
-        e.g. a 'gwl' coordinate from gwl_matching-based data, where each
-        member matched a different GSAT level. Without this, xr.concat
-        aligns by label and produces a sparse outer join instead of
-        stacking members. Same issue as reduce_models' drop_coords.
- 
-        Dropped coords are not lost: the same reduction is applied to
-        their per-member values and the result is re-attached as the
-        coordinate (e.g. gwl_matching_median carries the median gwl).
     """
     datasets = []
     dropped = {}
@@ -320,24 +293,6 @@ def reduce_members(member_dt, reduction="median", drop_coords=None):
  
 def reduce_models(nested_dict, reduction="median", expts=None, drop_coords=None):
     """
-    drop_coords : list of str, optional
-        Coordinate names to drop from each model's data before
-        concatenating along the new 'model' dimension. Needed for
-        coordinates that are physically different per model and shouldn't
-        be used to align datasets -- e.g. a 'gwl' coordinate from
-        gwl_matching-based data, where each model matched a different
-        GSAT level. Without this, xr.concat aligns by label: if every
-        model has a single-entry 'gwl' coord with a different value,
-        concat does an outer join across all those distinct values rather
-        than stacking the models, leaving each model's value isolated at
-        its own gwl slot (surrounded by NaN) instead of genuinely combined
-        -- so a later .median(dim='model') just silently returns whichever
-        single model occupies each slot, not a real multi-model statistic.
-        Dropping the coord first makes concat fall back to plain
-        positional stacking, which is what you want in that case.
-        Not needed (and would be wrong to use) for crossing_years-based
-        data, where gwl values like 1.5/2.0/3.0 are shared and meaningful
-        across models.
     """
     output = nested_dict.copy()
  
@@ -398,24 +353,6 @@ def _reduce_recursive(model_dict, reduction, drop_coords):
  
 def reduce_models_recursive(nested_dict, reduction="median", drop_coords=None):
     """
-    Compute a multi-model reduction across models for arbitrarily
-    nested dict structures under each model key, e.g.:
-      model -> Dataset/DataArray
-      model -> expt -> Dataset/DataArray
-      model -> var -> Dataset/DataArray
-      model -> expt -> member -> Dataset/DataArray
-    Recurses through whatever sits under each model until it hits a
-    Dataset/DataArray leaf, concatenates those leaves across models
-    along a new 'model' dim, and applies `reduction` (default
-    'median'). Returns nested_dict with an added
-    f"multi_model_{reduction}" key holding the reduced structure,
-    mirroring whatever nesting the per-model entries had.
- 
-    drop_coords : list of str, optional
-        Coordinate names to drop before concatenating at the leaf
-        level -- see original docstring: needed for per-model coords
-        like a gwl_matching-derived 'gwl' that shouldn't be used for
-        label-based alignment across models.
     """
     output = dict(nested_dict)
     output[f"multi_model_{reduction}"] = _reduce_recursive(nested_dict, reduction, drop_coords)

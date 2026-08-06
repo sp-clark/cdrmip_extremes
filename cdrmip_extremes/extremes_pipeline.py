@@ -79,9 +79,8 @@ class ExtremesPipeline:
 
     # ------------------------------------------------------------------
     def _extract_gwl_period_extremes_for(self, gwl_source):
-        """Internal helper: run the GWL-period extraction for one gwl-years
-        source dict (either self.crossing_years or self.gwl_matching),
-        returning a plain model -> expt -> member -> DataArray dict."""
+        """
+        """
         periods = defaultdict(lambda: defaultdict(dict))
         for model, expt_dict in self.regridded_concat.items():
             ext_months_by_member = self.extreme_months.get(model, {})
@@ -111,9 +110,7 @@ class ExtremesPipeline:
     def extract_gwl_period_extremes(self):
         """
         Computes gwl_period_extremes from crossing_years (if provided), and
-        gwl_period_extremes_matching from gwl_matching (if provided) --
-        as two separate plain model -> expt -> member -> DataArray dicts,
-        rather than overwriting one with the other.
+        gwl_period_extremes_matching from gwl_matching (if provided) 
         """
         if self.crossing_years:
             self.gwl_period_extremes = self._extract_gwl_period_extremes_for(self.crossing_years)
@@ -133,12 +130,7 @@ class ExtremesPipeline:
         """
         Per model/expt, member-mean exceedance frequency for each
         ext_type, at each gwl/branch.
- 
-        source_attr : 'gwl_period_extremes' (default, crossing_years-based)
-            or 'gwl_period_extremes_matching' (gwl_matching-based).
-        save_as : attribute name to store the result under. Defaults to
-            'exceedances' for the default source_attr, or
-            'exceedances_matching' if source_attr ends in '_matching'.
+
         """
         gwl_period_extremes = getattr(self, source_attr)
         if not gwl_period_extremes:
@@ -305,11 +297,7 @@ class ExtremesPipeline:
              'exceedances_median_multimodel', 'exceedances_matching_median_multimodel',
              'branch_differences_median_multimodel', 'branch_differences_matching_median_multimodel',
              'agreement', 'agreement_matching']
-            Any attribute name on self that doesn't exist or is empty is
-            skipped with a printed message rather than raising, so passing
-            a name from the crossing_years-only set when you only computed
-            gwl_matching (or a typo) won't silently do nothing without
-            telling you.
+
         """
         from pathlib import Path
         base = Path(proc_dir) / activity_id / category
@@ -414,11 +402,7 @@ class ExtremesPipeline:
     # ------------------------------------------------------------------
     def run(self):
         """
-        Runs the full pipeline. Computes both the crossing_years-based
-        and gwl_matching-based outputs, for whichever of the two were
-        actually provided to __init__ (compute_exceedances/
-        compute_branch_differences print a message and skip cleanly if
-        the corresponding *_period_extremes attribute is empty).
+        Runs the full pipeline.
         """
         self.compute_extreme_months().compute_thresholds().extract_gwl_period_extremes()
  
