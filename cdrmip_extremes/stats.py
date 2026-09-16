@@ -4,6 +4,7 @@ stats.py
  
 import numpy as np
 import xarray as xr
+from collections import defaultdict
  
  
 def _rolling_mean(da, window, time_dim):
@@ -349,7 +350,20 @@ def _reduce_recursive(model_dict, reduction, drop_coords):
         if sub_dict:
             result[key] = _reduce_recursive(sub_dict, reduction, drop_coords)
     return result
- 
+
+def reduce_member_tree(nested_dict, reduction='median', drop_coords=None):
+    """
+    Reduce a {model: {expt: {member: ds}}} tree over its member dimension.
+    Returns {model: {expt: ds}}.
+    """
+    output = defaultdict(dict)
+    for model, expt_dt in nested_dict.items():
+        for expt, member_dt in expt_dt.items():
+            output[model][expt] = reduce_members(
+                member_dt, reduction=reduction, drop_coords=drop_coords,
+            )
+    return dict(output)
+
  
 def reduce_models_recursive(nested_dict, reduction="median", drop_coords=None):
     """

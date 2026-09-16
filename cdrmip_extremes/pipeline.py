@@ -14,6 +14,7 @@ from .processing import concatenate_branches, regrid_to_common
 from . import utils, stats
 from .configs import DEFAULT_CHUNKS, DEFAULT_VARS_TO_DROP
 from . import save as save_io
+from .extremes import calc_txx, calc_tx90p, calc_rxnday, calc_txx_anomaly
 
 
 # ---------------------------------------------------------------------------
@@ -238,8 +239,6 @@ class CDRMIPPipeline:
             for model, member_dict in self.raw[cfg.experiment_id].items():
                 for member, ds in member_dict.items():
                     full_ds = self._chase_parents(ds, stop_before=cfg.stop_concat_before)
-                    # Re-stamp experiment_id since attrs now reflect whichever
-                    # ancestor the chain stopped at, not the original experiment.
                     full_ds = full_ds.assign_attrs(experiment_id=cfg.experiment_id)
                     concat[model][cfg.experiment_id][member] = full_ds
         self.concat = utils.defaultdict_to_dict(concat)
@@ -273,14 +272,13 @@ class CDRMIPPipeline:
     # Step 4: regrid
     # ------------------------------------------------------------------
     def regrid(self):
-        def regrid_ds(ds):
-            if 'tas' in ds:
-                return regrid_to_common(ds)
-            return ds
-
-        self.regridded_concat = _map_leaves(self.concat, regrid_ds)
-        self.regridded_picontrol = _map_leaves(self.picontrol, regrid_ds)
+        def process_ds(ds):
+            return regrid_to_common(utils.fix_units(ds))
+    
+        self.regridded_concat = _map_leaves(self.concat, process_ds)
+        self.regridded_picontrol = _map_leaves(self.picontrol, process_ds)
         return self
+
 
     # ------------------------------------------------------------------
     # Step 5: anomalies 
@@ -292,8 +290,9 @@ class CDRMIPPipeline:
         for model, expt_dict in self.regridded_concat.items():
             for expt, member_dict in expt_dict.items():
                 cfg = cfg_by_expt[expt]
+                varname = cfg.variable_id
                 for member, ds in member_dict.items():
-                    if 'tas' not in ds:
+                    if varname not in ds:
                         anomaly[model][expt][member] = ds
                         continue
  
@@ -335,15 +334,31 @@ class CDRMIPPipeline:
     # ------------------------------------------------------------------
     # Step 6: global mean
     # ------------------------------------------------------------------
+    # def compute_global_mean(self):
+        
+    #     def global_mean_ds(ds):
+    #         if 'tas' not in ds:
+    #             return ds
+    #         return utils.global_mean(ds).to_dataset(name='gsat')
+
+    #     self.gsat = _map_leaves(self.anomaly, global_mean_ds)
+    #     return self
+
     def compute_global_mean(self):
-        def global_mean_ds(ds):
-            if 'tas' not in ds:
-                return ds
-            return utils.global_mean(ds).to_dataset(name='gsat')
-
-        self.gsat = _map_leaves(self.anomaly, global_mean_ds)
+        cfg_by_expt = {c.experiment_id: c for c in self.config.experiments}
+        gsat = defaultdict(lambda: defaultdict(dict))
+    
+        for model, expt_dict in self.anomaly.items():
+            for expt, member_dict in expt_dict.items():
+                varname = cfg_by_expt[expt].variable_id
+                for member, ds in member_dict.items():
+                    if varname not in ds:
+                        gsat[model][expt][member] = ds
+                        continue
+                    gsat[model][expt][member] = utils.global_mean(ds).to_dataset(name='gsat')
+    
+        self.gsat = utils.defaultdict_to_dict(gsat)
         return self
-
     # ------------------------------------------------------------------
     # Optional: force computation of gsat
     # ------------------------------------------------------------------
@@ -634,6 +649,155 @@ class CDRMIPPipeline:
                 save_as=f"{attr}_{model_reduction}_multimodel",
             )
  
+        return self
+    # ------------------------------------------------------------------
+    # Optional: txx
+    # ------------------------------------------------------------------
+    def compute_txx(self):
+        cfg_by_expt = {c.experiment_id: c for c in self.config.experiments}
+        txx = defaultdict(lambda: defaultdict(dict))
+
+        for model, expt_dict in self.regridded_concat.items():
+            for expt, member_dict in expt_dict.items():
+                for member, ds in member_dict.items():
+                    txx[model][expt][member] = calc_txx(ds).chunk({"year": -1})
+
+        self.txx = utils.defaultdict_to_dict(txx)
+        return self
+
+    # ------------------------------------------------------------------
+    # Generic ETCCDI-index anomaly.
+    #
+    # Mirrors compute_anomalies() but for an already-computed annual index
+    # tree (txx, rxnday, ...). The reference climatology depends on the
+    # experiment's anomaly_reference:
+    #   'period'    -> mean of the index series over reference_period. The
+    #                  reference years must lie within the (chained) series.
+    #   'picontrol' -> the same index computed on the piControl run, then
+    #                  averaged over its years. Used for CDRMIP, where the
+    #                  piControl baseline is NOT concatenated to the series
+    #                  and lives in self.regridded_picontrol instead.
+    #
+    # index_fn : callable(ds) -> Dataset, the index applied to a raw
+    #            (piControl) dataset. Only called in the 'picontrol' branch.
+    # varname  : the index variable name in the index tree.
+    # ------------------------------------------------------------------
+    def _index_anomaly(self, index_dict, index_fn, varname):
+        cfg_by_expt = {c.experiment_id: c for c in self.config.experiments}
+        anom = defaultdict(lambda: defaultdict(dict))
+        pi_ref_cache = {}   # (model, member) -> reference climatology (or None)
+
+        for model, expt_dict in index_dict.items():
+            for expt, member_dict in expt_dict.items():
+                cfg = cfg_by_expt[expt]
+                for member, ds in member_dict.items():
+                    if varname not in ds:
+                        anom[model][expt][member] = ds
+                        continue
+
+                    if cfg.anomaly_reference == 'period':
+                        ref_lo, ref_hi = cfg.reference_period
+                        yrs = ds['year']
+                        # Reference not covered -> anomaly all-NaN. Drop member.
+                        if int(yrs.min()) > ref_lo or int(yrs.max()) < ref_hi:
+                            print(f"  Dropping {model}/{expt}/{member}: {varname} series "
+                                  f"{int(yrs.min())}–{int(yrs.max())} doesn't cover "
+                                  f"reference {ref_lo}–{ref_hi}")
+                            continue
+                        anom[model][expt][member] = utils.calc_anomaly(
+                            ds, ds, slice(ref_lo, ref_hi), time_dim='year'
+                        )
+
+                    elif cfg.anomaly_reference == 'picontrol':
+                        key = (model, member)
+                        if key not in pi_ref_cache:
+                            pi_ds = self.regridded_picontrol.get(model, {}).get(member)
+                            pi_ref_cache[key] = (
+                                None if pi_ds is None
+                                else index_fn(pi_ds).mean('year')
+                            )
+                        reference = pi_ref_cache[key]
+                        if reference is None:
+                            print(f"  No piControl for {model}/{member} — "
+                                  f"skipping {varname} anomaly")
+                            continue
+                        anom[model][expt][member] = ds - reference
+
+                    else:
+                        raise ValueError(
+                            f"Unknown anomaly_reference '{cfg.anomaly_reference}' for {expt}"
+                        )
+
+        return utils.defaultdict_to_dict(anom)
+
+    def compute_txx_anomaly(self):
+        self.txx_anomaly = self._index_anomaly(self.txx, calc_txx, 'txx')
+        return self
+
+    # ------------------------------------------------------------------
+    # Optional: tx90p
+    # ------------------------------------------------------------------
+    def compute_tx90p(self):
+        cfg_by_expt = {c.experiment_id: c for c in self.config.experiments}
+        tx90p = defaultdict(lambda: defaultdict(dict))
+    
+        for model, expt_dict in self.regridded_concat.items():
+            for expt, member_dict in expt_dict.items():
+                cfg = cfg_by_expt[expt]
+                for member, ds in member_dict.items():
+                    ref_lo, ref_hi = cfg.reference_period
+                    ds_annual = ds.groupby('time.year').mean(dim='time')
+                    yrs = ds_annual['year']
+                    yr_lo, yr_hi = int(yrs.min()), int(yrs.max())
+
+                    # None -> use this member's full extent
+                    lo = yr_lo if ref_lo is None else ref_lo
+                    hi = yr_hi if ref_hi is None else ref_hi
+                    
+                    # Reference period not covered -> would be all-NaN. Drop member.
+                    if yr_lo > lo or yr_hi < hi:
+                        print(f"  Dropping {model}/{expt}/{member}: series "
+                              f"{yr_lo}–{yr_hi} doesn't cover reference {lo}–{hi} "
+                              f"(historical likely not chained)")
+                        continue
+                    # ref_period = slice(str(lo), str(hi))   # cftime needs strings
+                    tx90p[model][expt][member] = calc_tx90p(ds, (lo,hi))
+    
+        self.tx90p = utils.defaultdict_to_dict(tx90p)   # was txx90p
+        return self
+
+    # ------------------------------------------------------------------
+    # Optional: rxnday (Rx1day / Rx5day / generalized n-day)
+    # ------------------------------------------------------------------
+    def compute_rxnday(self, n=1):
+        ns = [n] if isinstance(n, int) else list(n)
+        if not hasattr(self, 'rxnday'):
+            self.rxnday = {}
+ 
+        for nn in ns:
+            tree = defaultdict(lambda: defaultdict(dict))
+            for model, expt_dict in self.regridded_concat.items():
+                for expt, member_dict in expt_dict.items():
+                    for member, ds in member_dict.items():
+                        if 'pr' not in ds:
+                            continue
+                        tree[model][expt][member] = calc_rxnday(ds, n=nn).chunk({"year": -1})
+            self.rxnday[nn] = utils.defaultdict_to_dict(tree)
+ 
+        return self
+ 
+    def compute_rxnday_anomaly(self, n=None):
+        # n=None -> anomalies for every window already in self.rxnday. The
+        # piControl reference reuses the SAME n, so an Rx5day series is only
+        # ever differenced against an Rx5day baseline.
+        if not hasattr(self, 'rxnday_anomaly'):
+            self.rxnday_anomaly = {}
+        ns = list(self.rxnday) if n is None else ([n] if isinstance(n, int) else list(n))
+ 
+        for nn in ns:
+            self.rxnday_anomaly[nn] = self._index_anomaly(
+                self.rxnday[nn], lambda ds, nn=nn: calc_rxnday(ds, n=nn), f'rx{nn}day'
+            )
         return self
     # ------------------------------------------------------------------
     # Orchestration

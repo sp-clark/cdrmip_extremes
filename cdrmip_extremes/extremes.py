@@ -5,6 +5,13 @@ extremes.py
 import numpy as np
 import xarray as xr
 
+from collections import defaultdict
+
+from xclim.core.calendar import percentile_doy
+from xclim.indices import tx90p, warm_spell_duration_index, max_1day_precipitation_amount, max_n_day_precipitation_amount
+
+from . import stats, utils
+
 
 def monthly_extrema(ds, varname='tas'):
     """
@@ -182,3 +189,54 @@ def calc_gwl_branch_differences(frequencies, exclude_keys=('Multi-Model Median',
         drop_coords=drop_coords,
     )
     return differences, agreement
+
+# -------------------------------------------------------------------------
+# ETCCDI metrics
+# -------------------------------------------------------------------------
+
+def calc_txx(ds: xr.Dataset) -> xr.Dataset:
+    if "tasmax" in ds:  # only operate if tasmax exists
+        txx = ds["tasmax"].groupby("time.year").max(dim="time")
+        return txx.to_dataset(name="txx")
+    return ds  # return unchanged if no tasmax
+
+def calc_txx_anomaly(txx_ds, reference_period):
+    # txx has an integer 'year' dim, so reference_period is slice(1850, 1900)
+    return utils.calc_anomaly(txx_ds, txx_ds, reference_period, time_dim="year")
+
+def calc_tx90p(ds, ref_period):
+    if "tasmax" not in ds:
+        return ds
+ 
+    tasmax = ds["tasmax"]
+    tasmax = tasmax.sortby("time").drop_duplicates("time")
+    tasmax = tasmax.convert_calendar("noleap", align_on="date")
+    if not tasmax.attrs.get("units"):
+        tasmax = tasmax.assign_attrs(units="K")
+
+    # --- THRESHOLD ---------------------------------------------------------
+    lo, hi = ref_period
+    mask = (tasmax["time.year"] >= lo) & (tasmax["time.year"] <= hi)
+    ref_ds = (
+        tasmax.isel(time=mask)
+        .chunk({"time": -1, "lat": 45, "lon": 45})
+    )
+    thresh_doy = percentile_doy(ref_ds, per=90).sel(percentiles=90).compute()
+ 
+    # --- INDEX -------------------------------------------------------------
+    # tx90p compares each day to its day-of-year threshold: a per-timestep op
+    # that works on time-CHUNKED data. It never needs time=-1. Keep modest
+    # chunks so nothing gets rechunked into a giant contiguous block.
+    tasmax = tasmax.chunk({"time": 365, "lat": 45, "lon": 45})
+    tx90 = tx90p(tasmax, thresh_doy).groupby("time.year").mean(dim="time")
+    return tx90.to_dataset(name="tx90p")
+
+def calc_rxnday(ds: xr.Dataset, n: int = 1) -> xr.Dataset:
+    """
+    Calculate the ETCCDI RXnday index: annual maximum of the
+    running n-day precipitation total (n=1 -> Rx1day, n=5 -> Rx5day).
+    """
+    pr = ds['pr']
+    if n > 1:
+        pr = pr.rolling(time=n, min_periods=n).sum()
+    return pr.groupby('time.year').max(dim='time').to_dataset(name=f'rx{n}day')

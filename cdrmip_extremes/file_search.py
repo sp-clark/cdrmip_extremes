@@ -13,7 +13,9 @@ from .configs import RAW_DIR
 
 # Set these to the location of the relevant CMIP6 data
 DEFAULT_BASE_DIRS = [
-    RAW_DIR,
+    # RAW_DIR,
+    Path("/g/data/fs38/publications/CMIP6"),
+    Path("/g/data/oi10/replicas/CMIP6"),
 ]
 
 

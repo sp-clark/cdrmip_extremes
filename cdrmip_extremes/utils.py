@@ -115,4 +115,18 @@ def flatten_single(data):
         out[model] = val
     return out
 
+# utils.py
 
+_UNIT_FIXES = {
+    'kg m-2 s-1': ('mm/day', 86400),
+}
+
+def fix_units(ds):
+    """Apply known unit conversions (e.g. pr: kg m-2 s-1 -> mm/day) in place."""
+    for var in ds.data_vars:
+        units = ds[var].attrs.get('units')
+        if units in _UNIT_FIXES:
+            new_units, factor = _UNIT_FIXES[units]
+            ds = ds.assign({var: ds[var] * factor})
+            ds[var].attrs['units'] = new_units
+    return ds

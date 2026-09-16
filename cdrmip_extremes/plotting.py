@@ -509,17 +509,18 @@ def plot_ext_freq(exceedances, differences, agreement, model, expt, ext_type, gw
 # ---------------------------------------------------------------------------
 # Recipe: one map per model in a dict, same variable/expt
 # ---------------------------------------------------------------------------
-
-def plot_gwl_diff(data_dict, expt, varname=None, n_cols=3, levels=None, cmap=None,
+def plot_gwl_diff(data_dict, expt, varname=None, gwl=None, n_cols=3, levels=None, cmap=None,
                    cbar_label="SAT difference (°C)", suptitle=None, agreement=None):
     """
-
     """
     to_plot = {}
     for model, expt_node in data_dict.items():
         if expt not in expt_node:
             continue
-        to_plot[model] = as_dataarray(expt_node[expt], varname=varname)
+        da = as_dataarray(expt_node[expt], varname=varname)
+        if gwl is not None:
+            da = da.sel(gwl=gwl)
+        to_plot[model] = da
     
     # put multi_model_median first
     if 'multi_model_median' in to_plot:

@@ -138,12 +138,26 @@ def shift_time_to_start_year(ds, start_year=0, time_dim='time'):
     offset = start_year - first_year
     calendar = times[0].calendar
 
-    new_times = [
-        cftime.datetime(t.year + offset, t.month, t.day,
-                         t.hour, t.minute, t.second, calendar=calendar)
-        for t in times
-    ]
+    new_times = []
+    for t in times:
+        year, month, day = t.year + offset, t.month, t.day
+        if month == 2 and day == 29 and not calendar_isleap(year, calendar):
+            day = 28
+        new_times.append(cftime.datetime(year, month, day, t.hour, t.minute, t.second, calendar=calendar))
     return ds.assign_coords({time_dim: new_times})
+
+def calendar_isleap(year, calendar):
+    if calendar in ('standard', 'gregorian', 'proleptic_gregorian'):
+        return year % 4 == 0 and (year % 100 != 0 or year % 400 == 0)
+    if calendar == 'julian':
+        return year % 4 == 0
+    if calendar in ('noleap', '365_day'):
+        return False
+    if calendar in ('all_leap', '366_day'):
+        return True
+    if calendar == '360_day':
+        return False  # no Feb 29 concept
+    raise ValueError(f"unrecognized calendar: {calendar}")
 
 
 # ---------------------------------------------------------------------------
