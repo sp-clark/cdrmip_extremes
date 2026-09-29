@@ -1,41 +1,36 @@
 """
 extremes_pipeline.py
+
+Module to expedite the hottest/coldest month temperature analysis.
+This module makes use of the output of load_pipeline.py and draws from the functions defined
+in extremes.py to identify the pre-industrial hottest/coldest months for each grid-cell,
+define 'extreme' thresholds based on the mean and standard deviation temperatures for these months
+and then determine how frequently these thresholds are exceeded.
 """
 
 from collections import defaultdict
-
 import xarray as xr
+from pathlib import Path
 
-from . import extremes
-from . import stats
-from . import utils
-from . import save as save_io
-
-
-def _map_leaves(nested_dict, func):
-    out = {}
-    for k, v in nested_dict.items():
-        if isinstance(v, dict):
-            out[k] = _map_leaves(v, func)
-        else:
-            out[k] = func(v)
-    return out
+from . import extremes, stats, utils, gwl, io_disk
 
 
 class ExtremesPipeline:
 
-    def __init__(self, regridded_picontrol, regridded_concat, crossing_years=None,gwl_matching=None,
-                 varname='tas', gwl_window=21, ext_type_to_extrema=None):
-        self.regridded_picontrol = regridded_picontrol
+    def __init__(self, regridded_piControl, regridded_concat, crossing_years=None,
+                 gwl_matching=None, varname='tas', gwl_window=21, ext_type_to_extrema=None):
+        
+        self.regridded_piControl = regridded_piControl
         self.regridded_concat = regridded_concat
         self.crossing_years = crossing_years or {}
         self.gwl_matching = gwl_matching or {}
         self.varname = varname
         self.gwl_window = gwl_window
+        # config to convert min/max coordinates to 'cold'/'heat'
         self.ext_type_to_extrema = ext_type_to_extrema or {'heat': 'max', 'cold': 'min'}
 
-        self.extreme_months = {}       # model -> member -> Dataset (month of max/min)
-        self.thresholds = {}           # model -> member -> {'heat': Dataset, 'cold': Dataset}
+        self.extreme_months = {}       
+        self.thresholds = {}           
         self.gwl_period_extremes = {}          # model -> expt -> member -> DataArray (from crossing_years)
         self.gwl_period_extremes_matching = {} # model -> expt -> member -> DataArray (from gwl_matching)
         self.exceedances = {}                  # model -> expt -> {'heat': Dataset, 'cold': Dataset}
@@ -44,22 +39,23 @@ class ExtremesPipeline:
         self.branch_differences_matching = {}
         self.agreement = {}                    # expt -> {'heat': DataArray, 'cold': DataArray}
         self.agreement_matching = {}
- 
-        # populated by compute_multi_model_stat() -- opt-in
+
+        # populated by compute_multi_model_stat() -- optional
         self.exceedances_median_multimodel = {}
         self.branch_differences_median_multimodel = {}
+
     # ------------------------------------------------------------------
     def compute_extreme_months(self):
-        self.extreme_months = _map_leaves(
-            self.regridded_picontrol,
-            lambda ds: extremes.monthly_extrema(ds, varname=self.varname)
+        self.extreme_months = utils.map_nested(
+            lambda ds: extremes.monthly_extrema(ds, varname=self.varname),
+            self.regridded_piControl,
         )
         return self
 
     # ------------------------------------------------------------------
     def compute_thresholds(self):
         thresholds = defaultdict(dict)
-        for model, member_dict in self.regridded_picontrol.items():
+        for model, member_dict in self.regridded_piControl.items():
             for member, ds in member_dict.items():
                 ext_months = self.extreme_months.get(model, {}).get(member)
                 if ext_months is None or 'month' not in ext_months:
@@ -102,7 +98,7 @@ class ExtremesPipeline:
                         ext_type_to_extrema=self.ext_type_to_extrema,
                         varname=self.varname,
                     )
-                    periods[model][expt][member] = stats.extract_gwl_period(
+                    periods[model][expt][member] = gwl.extract_gwl_period(
                         ext_month_da, gwl_years, window=self.gwl_window, time_dim='year'
                     )
         return utils.defaultdict_to_dict(periods)
@@ -123,7 +119,7 @@ class ExtremesPipeline:
             print("  No gwl_matching provided — skipping gwl_period_extremes_matching")
  
         return self
-        
+
     # ------------------------------------------------------------------
 
     def compute_exceedances(self, source_attr='gwl_period_extremes', save_as=None):
@@ -173,73 +169,40 @@ class ExtremesPipeline:
  
         setattr(self, save_as, utils.defaultdict_to_dict(exceedances))
         return self
- 
+
     # ------------------------------------------------------------------
-    def compute_branch_differences(self, source_attr='exceedances', save_as=None, save_agreement_as=None):
-        """
-        For each ext_type and expt, ramp_down-minus-ramp_up difference
-        per model, plus the multi-model agreement on its sign.
- 
-        source_attr : 'exceedances' (default) or 'exceedances_matching'.
-        save_as / save_agreement_as : attribute names to store results
-            under. Default to 'branch_differences'/'agreement', or their
-            '_matching' counterparts if source_attr ends in '_matching'.
-        """
-        exceedances = getattr(self, source_attr)
-        if not exceedances:
-            print(f"  {source_attr} is empty — nothing to compute branch differences from")
-            return self
- 
-        is_matching = source_attr.endswith('_matching')
-        if save_as is None:
-            save_as = 'branch_differences_matching' if is_matching else 'branch_differences'
-        if save_agreement_as is None:
-            save_agreement_as = 'agreement_matching' if is_matching else 'agreement'
-        drop_coords = ['gwl'] if is_matching else None
- 
-        differences = defaultdict(dict)
-        agreement = defaultdict(dict)
- 
-        for ext_type in self.ext_type_to_extrema:
-            by_expt = defaultdict(dict)
-            for model, expt_dict in exceedances.items():
-                for expt, ext_dict in expt_dict.items():
-                    if ext_type in ext_dict:
-                        by_expt[expt][model] = ext_dict[ext_type]
- 
-            for expt, model_dict in by_expt.items():
-                if not model_dict:
-                    continue
-                diffs, agree = extremes.calc_gwl_branch_differences(model_dict, drop_coords=drop_coords)
-                for model, diff in diffs.items():
-                    differences[model].setdefault(expt, {})[ext_type] = diff
-                agreement.setdefault(expt, {})[ext_type] = agree
- 
-        setattr(self, save_as, utils.defaultdict_to_dict(differences))
-        setattr(self, save_agreement_as, utils.defaultdict_to_dict(agreement))
+
+    def compute_branch_differences(self, source_attr='exceedances', percent=False):
+        save_as = 'branch_differences' + ('_matching' if source_attr.endswith('_matching') else '')
+        diffs = utils.map_nested(
+            lambda exc: gwl.gwl_branch_difference(exc, percent=percent),
+            getattr(self, source_attr),
+        )
+        setattr(self, save_as, diffs)
+        return self
+    
+    # ------------------------------------------------------------------
+    
+    def compute_agreement(self, source_attr='branch_differences', threshold=0.75):
+        save_as = 'agreement' + ('_matching' if source_attr.endswith('_matching') else '')
+    
+        by_expt = defaultdict(lambda: defaultdict(dict))
+        for model, expt_dict in getattr(self, source_attr).items():
+            for expt, ext_dict in expt_dict.items():
+                for ext_type, diff in ext_dict.items():
+                    by_expt[expt][ext_type][model] = diff
+    
+        setattr(self, save_as, {
+            expt: {ext: stats.calc_agreement(models, threshold) for ext, models in ext_dict.items()}
+            for expt, ext_dict in by_expt.items()
+        })
         return self
 
     # ------------------------------------------------------------------
-    # load exceedances into memory
-    # ------------------------------------------------------------------
-    def load_exceedances(self, attribute='exceedances'):
-        """
-        """
-        def load_ext_dict(ext_dict):
-            return {ext_type: ds.load() for ext_type, ds in ext_dict.items()}
- 
-        data = getattr(self, attribute)
-        if not data:
-            print(f"  {attribute} is empty — nothing to load")
-            return self
- 
-        loaded = defaultdict(dict)
-        for model, expt_dict in data.items():
-            for expt, ext_dict in expt_dict.items():
-                loaded[model][expt] = load_ext_dict(ext_dict)
-        setattr(self, attribute, utils.defaultdict_to_dict(loaded))
+    def load(self, attribute='exceedances'):
+        setattr(self, attribute, utils.map_nested(lambda x: x.load(), getattr(self, attribute)))
         return self
- 
+
     # ------------------------------------------------------------------
     def compute_multi_model_stat(self, attribute, reduction="median", expts=None, drop_coords=None):
         """
@@ -270,7 +233,7 @@ class ExtremesPipeline:
             if not per_ext_type:
                 continue
  
-            reduced = stats.reduce_models(per_ext_type, reduction=reduction, expts=expts,
+            reduced = utils.reduce_models(per_ext_type, reduction=reduction, expts=expts,
                                            drop_coords=drop_coords)
             for model, expt_dict in reduced.items():
                 for expt, ds in expt_dict.items():
@@ -278,127 +241,7 @@ class ExtremesPipeline:
  
         setattr(self, f"{attribute}_{reduction}_multimodel", result)
         return self
- 
-    # ------------------------------------------------------------------
-    # Save outputs to disk.
-    # ------------------------------------------------------------------
-    def save(self, proc_dir, activity_id, category='extremes',overwrite=False,
-              outputs=None):
-        """
-        Parameters
-        ----------
-        proc_dir : Path
-        activity_id : str, e.g. 'CDRMIP'
-        overwrite : bool
-        outputs : list of str, optional
-            Which outputs to save. Defaults to all of:
-            ['thresholds',
-             'gwl_period_extremes', 'gwl_period_extremes_matching',
-             'exceedances_median_multimodel', 'exceedances_matching_median_multimodel',
-             'branch_differences_median_multimodel', 'branch_differences_matching_median_multimodel',
-             'agreement', 'agreement_matching']
 
-        """
-        from pathlib import Path
-        base = Path(proc_dir) / activity_id / category
-        defaults = [
-            'thresholds',
-            'gwl_period_extremes', 'gwl_period_extremes_matching',
-            'exceedances_median_multimodel', 'exceedances_matching_median_multimodel',
-            'branch_differences_median_multimodel', 'branch_differences_matching_median_multimodel',
-            'agreement', 'agreement_matching',
-        ]
-        outputs = outputs or defaults
- 
-        def _ds(obj):
-            """Coerce DataArray to Dataset for saving."""
-            return obj.to_dataset() if isinstance(obj, xr.DataArray) else obj
- 
-        def _get(name):
-            data = getattr(self, name, None)
-            if not data:
-                if name in outputs:
-                    print(f"  Skipping '{name}': empty or not computed")
-                return None
-            return data
- 
-        # --- thresholds: model -> member -> {ext_type: Dataset} ---
-        if 'thresholds' in outputs:
-            data = _get('thresholds')
-            if data:
-                save_dir = base / 'thresholds'
-                for model, member_dict in data.items():
-                    model_dir = save_dir / model
-                    model_dir.mkdir(parents=True, exist_ok=True)
-                    for member, ext_dict in member_dict.items():
-                        for ext_type, ds in ext_dict.items():
-                            path = model_dir / f"{model}_{member}_{self.varname}_thresholds_{ext_type}.nc"
-                            save_io._save_nc(_ds(ds), path, overwrite=overwrite)
- 
-        # --- gwl_period_extremes[_matching]: model -> expt -> member -> DataArray ---
-        for name in ['gwl_period_extremes', 'gwl_period_extremes_matching']:
-            if name not in outputs:
-                continue
-            data = _get(name)
-            if not data:
-                continue
-            save_dir = base / name
-            for model, expt_dict in data.items():
-                model_dir = save_dir / model
-                model_dir.mkdir(parents=True, exist_ok=True)
-                for expt, member_dict in expt_dict.items():
-                    for member, da in member_dict.items():
-                        path = model_dir / f"{model}_{expt}_{member}_{self.varname}_{name}.nc"
-                        save_io._save_nc(_ds(da), path, overwrite=overwrite)
- 
-        # --- exceedances_median_multimodel[_matching]: model -> expt -> {ext_type: Dataset} ---
-        for name in ['exceedances_median_multimodel', 'exceedances_matching_median_multimodel']:
-            if name not in outputs:
-                continue
-            data = _get(name)
-            if not data:
-                continue
-            save_dir = base / name
-            for model, expt_dict in data.items():
-                model_dir = save_dir / model
-                model_dir.mkdir(parents=True, exist_ok=True)
-                for expt, ext_dict in expt_dict.items():
-                    for ext_type, ds in ext_dict.items():
-                        path = model_dir / f"{model}_{expt}_{self.varname}_{name}_{ext_type}.nc"
-                        save_io._save_nc(_ds(ds), path, overwrite=overwrite)
- 
-        # --- branch_differences_median_multimodel[_matching]: model -> expt -> {ext_type: DataArray} ---
-        for name in ['branch_differences_median_multimodel', 'branch_differences_matching_median_multimodel']:
-            if name not in outputs:
-                continue
-            data = _get(name)
-            if not data:
-                continue
-            save_dir = base / name
-            for model, expt_dict in data.items():
-                model_dir = save_dir / model
-                model_dir.mkdir(parents=True, exist_ok=True)
-                for expt, ext_dict in expt_dict.items():
-                    for ext_type, da in ext_dict.items():
-                        path = model_dir / f"{model}_{expt}_{self.varname}_{name}_{ext_type}.nc"
-                        save_io._save_nc(_ds(da), path, overwrite=overwrite)
- 
-        # --- agreement[_matching]: expt -> {ext_type: DataArray} ---
-        for name in ['agreement', 'agreement_matching']:
-            if name not in outputs:
-                continue
-            data = _get(name)
-            if not data:
-                continue
-            save_dir = base / name
-            save_dir.mkdir(parents=True, exist_ok=True)
-            for expt, ext_dict in data.items():
-                for ext_type, da in ext_dict.items():
-                    path = save_dir / f"{expt}_{self.varname}_{name}_{ext_type}.nc"
-                    save_io._save_nc(_ds(da), path, overwrite=overwrite)
- 
-        return self
- 
     # ------------------------------------------------------------------
     def run(self):
         """
@@ -409,9 +252,29 @@ class ExtremesPipeline:
         if self.gwl_period_extremes:
             self.compute_exceedances(source_attr='gwl_period_extremes')
             self.compute_branch_differences(source_attr='exceedances')
+            self.compute_agreement(source_attr='branch_differences')
  
         if self.gwl_period_extremes_matching:
             self.compute_exceedances(source_attr='gwl_period_extremes_matching')
             self.compute_branch_differences(source_attr='exceedances_matching')
+            self.compute_agreement(source_attr='branch_differences')
  
         return self
+
+    def save(self, proc_dir, activity_id, category='extremes', overwrite=False, outputs=None):
+        outputs = outputs or [
+            'thresholds',
+            'gwl_period_extremes', 'gwl_period_extremes_matching',
+            'exceedances_median_multimodel', 'exceedances_matching_median_multimodel',
+            'branch_differences_median_multimodel', 'branch_differences_matching_median_multimodel',
+            'agreement', 'agreement_matching',
+        ]
+        base = Path(proc_dir) / activity_id / category
+        for name in outputs:
+            data = getattr(self, name, None)
+            if not data:
+                print(f"  Skipping '{name}': empty or not computed")
+                continue
+            io_disk.save_nested(data, base / name, f"{self.varname}_{name}", overwrite=overwrite)
+        return self
+ 

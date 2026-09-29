@@ -5,9 +5,12 @@ import json
 
 from .configs import PROC_DIR
 
-def _to_dataset(obj):
-    """Return an xr.Dataset from either a DataTree leaf or a Dataset."""
-    return obj.ds if hasattr(obj, "ds") else obj
+def _to_dataset(leaf, name):
+    if isinstance(leaf, xr.DataTree):
+        return leaf.ds
+    if isinstance(leaf, xr.DataArray):
+        return leaf.to_dataset(name=leaf.name or name)
+    return leaf
 
 
 def save_tree(data_dt, proc_dir, var, activity_id, category=None, overwrite=False):
@@ -30,11 +33,11 @@ def save_tree(data_dt, proc_dir, var, activity_id, category=None, overwrite=Fals
                     print(f"Skipping (already exists): {path}")
                     continue
                 print(f"Saving: {path}")
-                _to_dataset(leaf).to_netcdf(path)
+                _to_dataset(leaf, var).to_netcdf(path)
 
 
 def load_tree(proc_dir, var, activity_id, category=None, chunks="auto",
-              as_datatree=False):
+              as_datatree=False, as_dataarray=False,model_order=None):
     """Reload the tree saved by save_tree, keyed the same way.
     If `as_datatree` is True, each leaf is returned as an xr.DataTree;
     otherwise as an xr.Dataset.
@@ -49,133 +52,67 @@ def load_tree(proc_dir, var, activity_id, category=None, chunks="auto",
             suffix = f"_{var}_{category}.nc" if category is not None else f"_{var}.nc"
             for path in sorted(expt_dir.glob(f"*{suffix}")):
                 member = path.name[len(prefix):-len(suffix)]
-                ds = xr.open_dataset(path, chunks=chunks)
-                leaf = xr.DataTree(dataset=ds) if as_datatree else ds
+                if as_dataarray:
+                    leaf = xr.open_dataarray(path,chunks=chunks)
+                else:
+                    ds = xr.open_dataset(path, chunks=chunks)
+                    leaf = xr.DataTree(dataset=ds) if as_datatree else ds
                 data_dt.setdefault(model, {}).setdefault(expt, {})[member] = leaf
+    if model_order is not None:
+        data_dt = ({m: data_dt[m] for m in model_order if m in data_dt}
+                   | {m: v for m, v in data_dt.items() if m not in model_order})
     return data_dt
 
-def load_peak_warming(out_dir=None):
+def _to_builtin(x):
+    return getattr(x, 'values', x).item()
+
+def save_peak_warming(peak_warming, activity_id, proc_dir):
+    out_dir = Path(proc_dir) / activity_id / 'peak_warming'
+    out_dir.mkdir(parents=True, exist_ok=True)
+    with open(out_dir / "peak_warming.json", "w") as f:
+        json.dump(peak_warming, f, default=_to_builtin)
+
+def load_peak_warming(activity_id, proc_dir):
     """Load a peak_warming dict saved by save_peak_warming()."""
-    out_dir = Path(out_dir) if out_dir is not None else PROC_DIR / 'ScenarioMIP/peak_warming'
-    store = out_dir / "peak_warming.json"
-    with open(store) as f:
+    with open(Path(proc_dir) / activity_id / 'peak_warming' / "peak_warming.json") as f:
         return json.load(f)
 
-def save_pattern_tree(pattern_dicts, proc_dir, subdir='patterns', vars=None):
-    """Save {pattern_name: {model: {expt: {member: {var: da}}}}} to disk.
+def save_nested(tree, save_dir, name, overwrite=False, _keys=()):
+    """Save a nested dict of Datasets/DataArrays/DataTrees of any depth.
+    Every key but the last becomes a directory; all keys go in the filename."""
+    if isinstance(tree, dict):
+        for k, v in tree.items():
+            save_nested(v, save_dir, name, overwrite, _keys + (k,))
+        return
+    path = Path(save_dir, *_keys[:-1]) / f"{'_'.join(_keys)}_{name}.nc"
+    if path.exists() and not overwrite:
+        print(f"Skipping (already exists): {path}")
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    leaf = _to_dataset(tree, 'data')
+    print(f"Saving: {path}")
+    leaf.to_netcdf(path)
 
-    vars: None saves all variables; a string or iterable of strings saves
-    only those variables (e.g. vars='slopes' or vars=['slopes', 'intercepts']).
-    """
-    save_dir = Path(proc_dir) / subdir
-    if isinstance(vars, str):
-        vars = {vars}
-    elif vars is not None:
-        vars = set(vars)
-    for pattern_name, pattern_dict in pattern_dicts.items():
-        for model, expt_dict in pattern_dict.items():
-            model_dir = save_dir / pattern_name / model
-            
-            for expt, member_dict in expt_dict.items():
-                for member, var_dict in member_dict.items():
-                    for var, da in var_dict.items():
-                        if vars is not None and var not in vars:
-                            continue
-                        model_dir.mkdir(parents=True, exist_ok=True)
-                        path = model_dir / f"{model}_{expt}_{member}_{pattern_name}_{var}.nc"
-                        if path.exists():
-                            print(f"Skipping (already exists): {path}")
-                            continue
-                        print(f"Saving: {path}")
-                        da.to_netcdf(path)
 
-def load_pattern_tree(proc_dir, pattern_names, subdir='patterns', chunks='auto'):
-    """Reload the tree saved by save_pattern_tree, keyed the same way."""
-    load_dir = Path(proc_dir) / subdir
-    pattern_dicts = {}
-    for pattern_name in pattern_names:
-        pattern_dict = {}
-        for model_dir in sorted(p for p in (load_dir / pattern_name).iterdir() if p.is_dir()):
-            model = model_dir.name
-            prefix = f"{model}_"
-            for path in sorted(model_dir.glob(f"{model}_*_{pattern_name}_*.nc")):
-                stem = path.stem[len(prefix):]              # "{expt}_{member}_{pattern_name}_{var}"
-                front, var = stem.rsplit(f"_{pattern_name}_", 1)
-                expt, member = front.split('_', 1)           # assumes expt has no underscore
-                da = xr.open_dataarray(path, chunks=chunks)
-                pattern_dict.setdefault(model, {}).setdefault(expt, {}).setdefault(member, {})[var] = da
-        pattern_dicts[pattern_name] = pattern_dict
-    return pattern_dicts
+def _reorder(d, order):
+    """Put keys in `order` first (skipping any not present), the rest after."""
+    if order is None:
+        return d
+    return ({k: d[k] for k in order if k in d}
+            | {k: v for k, v in d.items() if k not in order})
 
-def save_error_tree(error_dicts, proc_dir, subdir='pattern_errors', overwrite=False):
-    """Save pattern-error trees to disk.
- 
-    `error_dicts` maps a kind label to a tree, e.g.
-        {'errors': errors_by_pattern, 'rmse': rmse_by_pattern}
-    where each tree is nested
-        {pattern_type: {predictor_expt: {model: {target_expt: {member: ds}}}}}
-    and each leaf is an xr.Dataset (e.g. holding `tas`).
- 
-    Layout on disk (every structural key is a directory, so hyphens/underscores
-    in model names or experiment ids can't be mis-parsed on reload):
-        {subdir}/{kind}/{pattern_type}/{predictor_expt}/{model}/{target_expt}/
-            {model}_{predictor_expt}_{target_expt}_{member}_{kind}.nc
+
+def load_nested(load_dir, name, chunks='auto', order=None, _keys=()):
+    """Reload a tree written by save_nested, keyed the same way.
+    `order` : list of str, optional
+        Order for the top-level keys (e.g. models); unlisted keys follow
+        alphabetically.
     """
-    save_dir = Path(proc_dir) / subdir
-    for kind, tree in error_dicts.items():
-        for pattern_type, pred_dict in tree.items():
-            for predictor_expt, model_dict in pred_dict.items():
-                for model, target_dict in model_dict.items():
-                    for target_expt, member_dict in target_dict.items():
-                        out_dir = (save_dir / kind / pattern_type /
-                                   predictor_expt / model / target_expt)
-                        out_dir.mkdir(parents=True, exist_ok=True)
-                        for member, ds in member_dict.items():
-                            fname = (f"{model}_{predictor_expt}_{target_expt}_"
-                                     f"{member}_{kind}.nc")
-                            path = out_dir / fname
-                            if path.exists() and not overwrite:
-                                print(f"Skipping (already exists): {path}")
-                                continue
-                            print(f"Saving: {path}")
-                            _to_dataset(ds).to_netcdf(path)
- 
- 
-def load_error_tree(proc_dir, kinds, subdir='pattern_errors', chunks='auto',
-                    pattern_types=None):
-    """Reload the trees saved by save_error_tree, keyed the same way.
- 
-    Returns {kind: {pattern_type: {predictor_expt: {model: {target_expt:
-             {member: ds}}}}}} for each requested kind (e.g. ['errors','rmse']).
- 
-    pattern_types: None loads all pattern types; a string or iterable of
-    strings loads only those (e.g. pattern_types='global' or
-    pattern_types=['global', 'regional']).
-    """
-    load_dir = Path(proc_dir) / subdir
-    if isinstance(pattern_types, str):
-        pattern_types = {pattern_types}
-    elif pattern_types is not None:
-        pattern_types = set(pattern_types)
-    out = {}
-    for kind in kinds:
-        tree = {}
-        kind_dir = load_dir / kind
-        for pt_dir in sorted(p for p in kind_dir.iterdir() if p.is_dir()):
-            if pattern_types is not None and pt_dir.name not in pattern_types:
-                continue
-            for pred_dir in sorted(p for p in pt_dir.iterdir() if p.is_dir()):
-                for model_dir in sorted(p for p in pred_dir.iterdir() if p.is_dir()):
-                    model = model_dir.name
-                    for tgt_dir in sorted(p for p in model_dir.iterdir() if p.is_dir()):
-                        prefix = f"{model}_{pred_dir.name}_{tgt_dir.name}_"
-                        suffix = f"_{kind}.nc"
-                        for path in sorted(tgt_dir.glob(f"*{suffix}")):
-                            member = path.name[len(prefix):-len(suffix)]
-                            ds = xr.open_dataset(path, chunks=chunks)
-                            (tree.setdefault(pt_dir.name, {})
-                                 .setdefault(pred_dir.name, {})
-                                 .setdefault(model, {})
-                                 .setdefault(tgt_dir.name, {})[member]) = ds
-        out[kind] = tree
-    return out
+    load_dir = Path(load_dir)
+    out = {d.name: load_nested(d, name, chunks, _keys=_keys + (d.name,))
+           for d in sorted(p for p in load_dir.iterdir() if p.is_dir())}
+    prefix = '_'.join(_keys) + '_' if _keys else ''
+    suffix = f"_{name}.nc"
+    for path in sorted(load_dir.glob(f"{prefix}*{suffix}")):
+        out[path.name[len(prefix):-len(suffix)]] = xr.open_dataset(path, chunks=chunks)
+    return _reorder(out, order)

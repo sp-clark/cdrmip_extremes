@@ -824,48 +824,274 @@ def plot_ext_freq_diff_stacked(differences, expt, ext_type, panels,
 # ---------------------------------------------------------------------------
  
 def plot_gsat_timeseries(gsat_rolling, gwl_matching_years, colour_dict,
+                         varname='gsat_rolling',
                          title=None,
                          ylabel="GSAT (°C)", xlim=(1850, 2300), ylim=(-0.2, 4.1),
                          end_marker_year=2190, figsize=(16, 8), legend_ncol=5,
+                         gwl_marker_mode='height',
+                         crossing_years=None, gwl=None,
+                         raw_tree=None, raw_alpha=0.3,
+                         co2=None, co2_label="Atmospheric CO$_2$ (ppm)",
+                         legend_loc='below', legend_fontsize=None,
+                         fig=None, ax=None,
                          fig_dir=None, folder=None, file_name=None):
     """
+    Generic rolling-timeseries-with-GWL-marker plot. Works for any variable
+    tree shaped {model: {expt: Dataset-or-DataArray}} (e.g. gsat_rolling,
+    or a smoothed global-mean pr tree) -- pass `varname` to pick the data
+    variable when the leaves are Datasets with more than one variable.
+
+    `gwl_marker_mode` controls how the GWL crossing markers are drawn:
+      'height' (default, matches the original GSAT plot) -- markers/axhline
+          sit at y=gwl (the warming-level threshold in degC), from
+          `gwl_matching_years` (ramp-up crossing only). Only makes sense
+          when the y-axis IS the GSAT/GMST used to define the gwl.
+      'vline'  -- vertical dashed line + marker at each crossing year,
+          pinned to the *data* curve's own y-value at that year, not to
+          gwl. Use this whenever the y-axis is some other variable (e.g.
+          global-mean pr). When `crossing_years` and `gwl` are both given,
+          this draws BOTH the ramp-up ('^') and ramp-down ('v') crossings
+          of that warming level, exactly like the period='gwl' branch of
+          plot_gsat_and_gwls in 02a_cdrmip_SAT.ipynb. Without them, it
+          falls back to a single ramp-up marker from `gwl_matching_years`.
+
+    `legend_loc`: 'below' (default) reproduces the original below-the-axes
+    legend (bbox_to_anchor). Any other matplotlib `loc` string (e.g.
+    'upper left', as used in 02a_cdrmip_SAT.ipynb) draws the legend inside
+    the axes instead.
+
+    `raw_tree`, if given, is a tree of the same shape as `gsat_rolling` but
+    unsmoothed (e.g. `global_mean_median` alongside a rolling `gsat_rolling`)
+    -- drawn first as a faded line under the rolling mean, same as the
+    unsmoothed GSAT line in plot_gsat_and_gwls in 02a_cdrmip_SAT.ipynb.
+
+    `co2`, if given, is an xr.DataArray with a 'year' coord (e.g.
+    `utils.build_co2_path()`) plotted on a twin y-axis and folded into the
+    same legend as the timeseries. (Unlike the 02a version, this uses the
+    DataArray's own `.plot()` so it lines up on 'year' correctly, rather
+    than a raw index -- passing an xr.DataArray straight to `ax.plot()`
+    ignores its coordinate and plots against position instead.)
+
+    Pass `fig`/`ax` to draw onto an existing axes (e.g. as one panel of a
+    larger composite figure); otherwise a new standalone figure is created.
     """
-    fig, ax = plt.subplots(1, 1, figsize=figsize)
- 
+    standalone = ax is None
+    if standalone:
+        fig, ax = plt.subplots(1, 1, figsize=figsize)
+
+    if raw_tree is not None:
+        for model, expt_dt in raw_tree.items():
+            for expt, node in expt_dt.items():
+                raw_da = as_dataarray(node, varname=varname)
+                raw_da.plot(ax=ax, color=colour_dict[model], linewidth=2, alpha=raw_alpha)
+
+    plotted_da = {}
     for model, expt_dt in gsat_rolling.items():
-        for expt, da in expt_dt.items():
-            da.gsat_rolling.plot(
+        for expt, node in expt_dt.items():
+            da = as_dataarray(node, varname=varname)
+            plotted_da[model] = da
+            da.plot(
                 ax=ax, label=model, linewidth=3, color=colour_dict[model],
             )
- 
-    for model, expt_dict in gwl_matching_years.items():
-        for expt, member_dt in expt_dict.items():
-            members = [ds.drop_vars('gwl') for ds in member_dt.values()]
-            median_ds = xr.concat(members, dim='member').median(dim=['member'])
-            gwl = np.round(np.median([ds.gwl.item() for ds in member_dt.values()]), 2)
-            pre_gwl_year = median_ds.sel(branch='ramp_up').gwl_matching_years.values
-            ax.axhline(y=gwl, color=colour_dict[model], linestyle='--', alpha=0.5)
-            ax.scatter(end_marker_year, gwl, color=colour_dict[model],
-                       marker='v', s=400, zorder=5)
-            ax.scatter(pre_gwl_year, gwl, color=colour_dict[model],
-                       marker='^', s=400, zorder=5)
+
+    if gwl_marker_mode == 'height':
+        for model, expt_dict in gwl_matching_years.items():
+            for expt, member_dt in expt_dict.items():
+                members = [ds.drop_vars('gwl') for ds in member_dt.values()]
+                median_ds = xr.concat(members, dim='member').median(dim=['member'])
+                gwl_val = np.round(np.median([ds.gwl.item() for ds in member_dt.values()]), 2)
+                pre_gwl_year = median_ds.sel(branch='ramp_up').gwl_matching_years.values
+
+                # ax.axhline(y=gwl_val, color=colour_dict[model], linestyle='--', alpha=0.5)
+                ax.scatter(end_marker_year, gwl_val, color=colour_dict[model],
+                           marker='v', s=400, zorder=5)
+                ax.scatter(pre_gwl_year, gwl_val, color=colour_dict[model],
+                           marker='^', s=400, zorder=5)
+
+    elif gwl_marker_mode == 'vline':
+        if crossing_years is not None and gwl is not None:
+            for model, expt_dict in crossing_years.items():
+                da = plotted_da.get(model)
+                if da is None:
+                    continue
+                for expt, member_dt in expt_dict.items():
+                    # crossing_years leaves are per-member (dims gwl, branch)
+                    # -- reduce across members first, same as gwl_matching_years.
+                    member_das = [as_dataarray(v, varname='crossing_years') for v in member_dt.values()]
+                    reduced = xr.concat(member_das, dim='member').median(dim='member')
+                    for branch, marker in (('ramp_up', '^'), ('ramp_down', 'v')):
+                        year = float(reduced.sel(branch=branch, gwl=gwl).values)
+                        if np.isnan(year):
+                            continue
+                        # ax.axvline(x=year, color=colour_dict[model], linestyle='--', alpha=0.5)
+                        y_at_crossing = float(da.interp(year=year))
+                        ax.scatter(year, y_at_crossing, color=colour_dict[model],
+                                   marker=marker, s=400, zorder=5)
+        else:
+            # fall back: ramp-up crossing only, from gwl_matching_years
+            for model, expt_dict in gwl_matching_years.items():
+                for expt, member_dt in expt_dict.items():
+                    members = [ds.drop_vars('gwl') for ds in member_dt.values()]
+                    median_ds = xr.concat(members, dim='member').median(dim=['member'])
+                    pre_gwl_year = median_ds.sel(branch='ramp_up').gwl_matching_years.values
+
+                    # ax.axvline(x=pre_gwl_year, color=colour_dict[model], linestyle='--', alpha=0.5)
+                    da = plotted_da.get(model)
+                    if da is not None:
+                        y_at_crossing = float(da.interp(year=pre_gwl_year))
+                        ax.scatter(pre_gwl_year, y_at_crossing, color=colour_dict[model],
+                                   marker='^', s=400, zorder=5)
+    else:
+        raise ValueError(f"Unknown gwl_marker_mode {gwl_marker_mode!r}")
  
     ax.set_ylim(ylim)
     ax.set_xlim(xlim)
     ax.set_xlabel('Time', fontsize=18)
     ax.set_ylabel(ylabel, fontsize=18)
     ax.tick_params(axis='both', which='major', labelsize=16)
- 
+
+    ax.axvline(x = 140, color = 'gray',linewidth=1.0,linestyle='--',alpha=0.7)
+    ax.axvline(x = 280, color = 'gray',linewidth=1.0,linestyle='--',alpha=0.7)
+    ax.axhline(y = 0, color = 'black',linewidth=1.0)
+
+    ax2 = None
+    if co2 is not None:
+        ax2 = ax.twinx()
+        co2.plot(ax=ax2, color='gray', linewidth=2, linestyle='--', alpha=0.7,
+                 label='Atmospheric CO$_2$')
+        ax2.set_ylabel(co2_label, fontsize=18, color='gray')
+        ax2.set_xlabel('')
+        ax2.set_title('')
+        ax2.tick_params(axis='y', colors='gray', labelsize=16)
+        ax2.yaxis.label.set_color('gray')
+
     handles, labels = ax.get_legend_handles_labels()
     unique = dict(zip(labels, handles))
-    ax.legend(
-        unique.values(), unique.keys(),
-        loc='upper center', bbox_to_anchor=(0.5, -0.12),
-        ncol=legend_ncol, fontsize=18, frameon=False,
-    )
+    if ax2 is not None:
+        handles2, labels2 = ax2.get_legend_handles_labels()
+        unique.update(dict(zip(labels2, handles2)))
+    if legend_loc == 'below':
+        ax.legend(
+            unique.values(), unique.keys(),
+            loc='upper center', bbox_to_anchor=(0.5, -0.12),
+            ncol=legend_ncol, fontsize=legend_fontsize or 18, frameon=False,
+        )
+    else:
+        ax.legend(
+            unique.values(), unique.keys(),
+            loc=legend_loc, ncol=1, fontsize=legend_fontsize or 12, frameon=False,
+        )
     ax.set_title(title, fontsize=24, y=1.02)
+    if standalone:
+        fig.tight_layout()
+
+    if standalone and fig_dir is not None and folder is not None and file_name is not None:
+        save_figure(fig, fig_dir, folder, file_name)
+    return fig
+
+
+# ---------------------------------------------------------------------------
+#  Composite figure: timeseries panel + multi-model median map + per-model
+#  map grid. Generalization of the ad-hoc plot_full_figure() that lived in
+#  02a_cdrmip_SAT.ipynb (GSAT + SAT-difference maps); parameterised by
+#  varname/units so it also works for e.g. global-mean pr.
+# ---------------------------------------------------------------------------
+
+def plot_timeseries_and_reversibility_maps(
+    rolling_tree, gwl_matching_years, colour_dict,
+    median_da, agreement_da, model_dict, model_list,
+    varname='gsat_rolling',
+    levels=None, cmap=None,
+    ts_ylabel="GSAT (°C)", ts_ylim=(-0.2, 4.1), ts_xlim=(1850, 2300),
+    end_marker_year=2190,
+    gwl_marker_mode='height',
+    crossing_years=None, gwl=None,
+    raw_tree=None, raw_alpha=0.3,
+    co2=None, co2_label="Atmospheric CO$_2$ (ppm)",
+    legend_loc='below', legend_fontsize=None,
+    cbar_label="Difference",
+    figsize=(24, 14),
+    fig_dir=None, folder=None, file_name=None,
+):
+    """
+    Three-panel figure:
+      (a) top-left    -- rolling timeseries with GWL crossing-year markers
+                          (as plot_gsat_timeseries), for `rolling_tree`.
+      (b) top-right    -- single Robinson map of `median_da` (already
+                          selected/reduced to 2-D lat/lon), with `agreement_da`
+                          stippling.
+      (c) bottom grid  -- one Robinson map per model in `model_list`, pulled
+                          from `model_dict[model]` (also already 2-D).
+
+    `median_da`, `agreement_da` and each `model_dict[model]` should already
+    be reduced to plain lat/lon DataArrays (e.g. `.sel(gwl=...)` applied by
+    the caller) -- this function only draws them, it does not select gwl/expt.
+    """
+    levels = np.linspace(-2, 2, 21) if levels is None else levels
+    cmap_resolved, norm = make_norm(levels, cmap or cm.RdBu_r)
+
+    fig = plt.figure(figsize=figsize)
+    outer_gs = gridspec.GridSpec(2, 1, height_ratios=[1.2, 1.8], hspace=0.15)
+    top_gs = gridspec.GridSpecFromSubplotSpec(
+        1, 2, subplot_spec=outer_gs[0], wspace=0.2, width_ratios=[1.45, 1]
+    )
+    ax1 = fig.add_subplot(top_gs[0, 0])
+    ax2 = fig.add_subplot(top_gs[0, 1], projection=ccrs.Robinson())
+
+    n_models = len(model_list)
+    n_cols = min(4, n_models) or 1
+    n_rows = math.ceil(n_models / n_cols)
+    bottom_gs = gridspec.GridSpecFromSubplotSpec(
+        n_rows, n_cols, subplot_spec=outer_gs[1], hspace=0.05, wspace=0.05
+    )
+    all_map_axes = [fig.add_subplot(bottom_gs[i, j], projection=ccrs.Robinson())
+                    for i in range(n_rows) for j in range(n_cols)]
+    map_axes = all_map_axes[:n_models]
+    for unused_ax in all_map_axes[n_models:]:
+        unused_ax.set_visible(False)
+
+    # (a) timeseries
+    plot_gsat_timeseries(
+        rolling_tree, gwl_matching_years, colour_dict,
+        varname=varname, ylabel=ts_ylabel, xlim=ts_xlim, ylim=ts_ylim,
+        end_marker_year=end_marker_year, gwl_marker_mode=gwl_marker_mode,
+        crossing_years=crossing_years, gwl=gwl,
+        raw_tree=raw_tree, raw_alpha=raw_alpha,
+        co2=co2, co2_label=co2_label,
+        legend_loc=legend_loc, legend_fontsize=legend_fontsize,
+        fig=fig, ax=ax1,
+    )
+
+    # (b) multi-model median map
+    im = ax2.imshow(
+        median_da, transform=ccrs.PlateCarree(), cmap=cmap_resolved,
+        origin='lower', extent=(0, 360, -90, 90), norm=norm,
+    )
+    ax2.set_title('Multi-Model Median', fontsize=20)
+    ax2.coastlines()
+    if agreement_da is not None:
+        add_stippling(ax2, agreement_da)
+
+    # (c) per-model map grid
+    for model, ax in zip(model_list, map_axes):
+        ax.imshow(
+            model_dict[model], transform=ccrs.PlateCarree(), cmap=cmap_resolved,
+            origin='lower', extent=(0, 360, -90, 90), norm=norm,
+        )
+        ax.set_title(model, fontsize=18)
+        ax.coastlines()
+
+    add_colorbar(
+        fig, im, rect=[0.93, 0.1, 0.02, 0.8], label=cbar_label,
+        fraction=0.02, aspect=20, orientation='vertical', extend='both',
+        tick_fontsize=16,
+    )
+
+    for text, xy in [('(a)', (-0.1, 1.02)), ('(b)', (1.1, 1.02)), ('(c)', (-0.1, -0.2))]:
+        ax1.text(*xy, text, transform=ax1.transAxes, fontsize=20, va='bottom', ha='left')
+
     fig.tight_layout()
- 
+
     if fig_dir is not None and folder is not None and file_name is not None:
         save_figure(fig, fig_dir, folder, file_name)
     return fig

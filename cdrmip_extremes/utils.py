@@ -1,3 +1,7 @@
+"""
+utils.py
+"""
+
 import xarray as xr
 import numpy as np
 import cftime
@@ -21,35 +25,10 @@ def global_mean(x, var="tas"):
 
     return da.weighted(weights).mean(("lon", "lat"))
 
-def calc_anomaly(
-    ds: xr.Dataset,
-    ds_ref: xr.Dataset,
-    reference_period: slice,
-    *,
-    time_dim="time",
-) -> xr.Dataset:
-    """
-    Function to calculate anomaly with respect to 
-    reference period. Assumes child dataset is already
-    concatenated to parent.
-    """
-    # select reference slice and mean
-    if time_dim not in ds.dims:
-        raise ValueError(f"{time_dim} is not a dimension of this dataset. "
-                         f"Available dims: {list(ds.dims)}")
-    # calculate reference mean
-    ref = ds_ref.sel({time_dim:reference_period})
-    ref = ref.mean(dim=time_dim)
-
-    # subtract reference from ds
-    anom = ds - ref
-    return anom
-    
-def rolling(ds,window,time_dim='year'):
-    if time_dim != 'year':
-        ds = ds.groupby('time.year').mean(dim='time')
-    return ds.rolling(year=window,center=True,min_periods=1).mean()
-
+# def rolling(ds,window,time_dim='year'):
+#     if time_dim != 'year':
+#         ds = ds.groupby('time.year').mean(dim='time')
+#     return ds.rolling(year=window,center=True,min_periods=1).mean()
 
 def defaultdict_to_dict(d):
     if isinstance(d, defaultdict):
@@ -65,13 +44,135 @@ def _map_leaves(nested_dict, func):
             out[k] = func(v)
     return out
 
-def sort_models(nested_dict, model_order):
-    known = [m for m in model_order if m in nested_dict]
-    unknown = [m for m in nested_dict if m not in model_order]
-    if unknown:
-        print(f"  sort_models: no order defined for {unknown}, appending at end")
-    return {m: nested_dict[m] for m in known + unknown}
+def map_nested(func, *trees):
+    """Apply func to the leaves of one or more identically nested dicts.
+    Leaves for which func returns None are dropped."""
+    if isinstance(trees[0], dict):
+        out = {k: map_nested(func, *(t[k] for t in trees)) for k in trees[0]}
+        return {k: v for k, v in out.items() if v is not None}
+    return func(*trees)
     
+def map_with_picontrol(func, tree, pi_tree):
+    """Apply func(ds, pi_leaf) over {model: {expt: {member: ds}}}, taking pi_leaf
+    from {model: {member: ...}}. Members without a piControl entry are dropped."""
+    return {
+        model: {
+            expt: {mem: func(ds, pi_tree[model][mem])
+                   for mem, ds in mems.items() if mem in pi_tree.get(model, {})}
+            for expt, mems in expts.items()
+        }
+        for model, expts in tree.items()
+    }
+
+    
+_UNIT_FIXES = {
+    'kg m-2 s-1': ('mm/day', 86400),
+}
+
+def fix_units(ds):
+    """Apply known unit conversions (e.g. pr: kg m-2 s-1 -> mm/day) in place."""
+    for var in ds.data_vars:
+        units = ds[var].attrs.get('units')
+        if units in _UNIT_FIXES:
+            new_units, factor = _UNIT_FIXES[units]
+            ds = ds.assign({var: ds[var] * factor})
+            ds[var].attrs['units'] = new_units
+    return ds
+    
+def select_years(ds, lo, hi):
+    """Keep years lo..hi inclusive."""
+    years = ds.time.dt.year
+    return ds.isel(time=(years >= lo) & (years <= hi))
+# ---------------------------------------------------------------------------
+# mutli-member/multi-model reduction
+# ---------------------------------------------------------------------------
+
+def _pop_coords(ds, drop_coords, store):
+    """Drop `drop_coords` from ds, stashing their values in `store` so the
+    reduction can be applied to them too (instead of losing them)."""
+    if drop_coords:
+        for c in drop_coords:
+            if c in ds.coords:
+                store.setdefault(c, []).append(np.atleast_1d(ds[c].values))
+                ds = ds.drop_vars(c)
+    return ds
+
+def _restore_reduced_coords(reduced, store, reduction):
+    """Re-attach dropped coords to the reduced result, applying the same
+    reduction across members/models (e.g. median gwl level)."""
+    np_reduce = getattr(np, f"nan{reduction}", None) or getattr(np, reduction)
+    for c, vals in store.items():
+        try:
+            summary = np_reduce(np.stack(vals), axis=0)
+        except (ValueError, TypeError):
+            continue  # inconsistent shapes / non-numeric -> leave dropped
+        if c in reduced.dims and summary.shape == (reduced.sizes[c],):
+            reduced = reduced.assign_coords({c: summary})
+    return reduced
+    
+def reduce_members(member_dt, reduction="median", drop_coords=None):
+    """
+    """
+    datasets = []
+    dropped = {}
+    for member, ds in member_dt.items():
+        ds = _pop_coords(ds, drop_coords, dropped)
+        datasets.append(ds.expand_dims(member=[member]))
+ 
+    combined = xr.concat(datasets, dim="member")
+    reduced = getattr(combined, reduction)(dim="member")
+    return _restore_reduced_coords(reduced, dropped, reduction)
+
+def reduce_member_tree(nested_dict, reduction='median', drop_coords=None):
+    """
+    Reduce a {model: {expt: {member: ds}}} tree over its member dimension.
+    Returns {model: {expt: ds}}.
+    """
+    output = defaultdict(dict)
+    for model, expt_dt in nested_dict.items():
+        for expt, member_dt in expt_dt.items():
+            output[model][expt] = reduce_members(
+                member_dt, reduction=reduction, drop_coords=drop_coords,
+            )
+    return dict(output)
+ 
+def reduce_models(nested_dict, reduction="median", expts=None, drop_coords=None):
+    """
+    """
+    output = nested_dict.copy()
+ 
+    if expts is None:
+        first_model = next(iter(nested_dict))
+        expts = nested_dict[first_model].keys()
+ 
+    output[f"multi_model_{reduction}"] = {}
+ 
+    for expt in expts:
+        datasets = []
+        dropped = {}
+        for model, expt_dt in nested_dict.items():
+            if expt not in expt_dt:
+                continue
+            ds = _pop_coords(expt_dt[expt], drop_coords, dropped)
+            datasets.append(ds.expand_dims(model=[model]))
+ 
+        reduced = getattr(xr.concat(datasets, dim="model"), reduction)(dim="model")
+        output[f"multi_model_{reduction}"][expt] = _restore_reduced_coords(
+            reduced, dropped, reduction
+        )
+ 
+    return output
+    
+def member_median(tree):
+    """{model: {expt: {member: da}}} -> {model: {expt: da}}, median across members."""
+    return {model: {expt: xr.concat(list(members.values()), dim="member").median("member")
+                    for expt, members in expts.items()}
+            for model, expts in tree.items()}
+
+# ---------------------------------------------------------------------------
+# CO2 concentrations
+# ---------------------------------------------------------------------------
+
 def build_co2_path(piCo2=284.7):
     CO2_4x = piCo2 * 4
     years_up = np.arange(0,140,1)
@@ -106,27 +207,3 @@ def build_co2_path(piCo2=284.7):
              dims=['year'],
              coords={'year':years}
             )
-
-def flatten_single(data):
-    out = {}
-    for model, expt_dict in data.items():
-        (expt, member_dict), = expt_dict.items()
-        (member, val), = member_dict.items()
-        out[model] = val
-    return out
-
-# utils.py
-
-_UNIT_FIXES = {
-    'kg m-2 s-1': ('mm/day', 86400),
-}
-
-def fix_units(ds):
-    """Apply known unit conversions (e.g. pr: kg m-2 s-1 -> mm/day) in place."""
-    for var in ds.data_vars:
-        units = ds[var].attrs.get('units')
-        if units in _UNIT_FIXES:
-            new_units, factor = _UNIT_FIXES[units]
-            ds = ds.assign({var: ds[var] * factor})
-            ds[var].attrs['units'] = new_units
-    return ds

@@ -219,5 +219,3 @@ def load_fx(variables,table_id='fx',domain='atm',experiment_id='1pctCO2-cdr',
             data[var] = ds
             
     return data
-
-                         

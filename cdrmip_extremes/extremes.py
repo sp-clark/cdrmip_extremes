@@ -4,6 +4,7 @@ extremes.py
 
 import numpy as np
 import xarray as xr
+import cftime
 
 from collections import defaultdict
 
@@ -12,6 +13,9 @@ from xclim.indices import tx90p, warm_spell_duration_index, max_1day_precipitati
 
 from . import stats, utils
 
+# ---------------------------------------------------------------------------
+# hottest/coldest month analysis
+# ---------------------------------------------------------------------------
 
 def monthly_extrema(ds, varname='tas'):
     """
@@ -130,113 +134,119 @@ def calculate_exceedances(monthly_temps, ext_thresholds, ext_type):
     ])
 
 
-def compute_multi_model_median(data_dict, dim='model'):
-    """
-    """
-    stacked = xr.concat(
-        list(data_dict.values()), dim=dim, compat='override', coords='minimal'
-    )
-    return stacked.median(dim=dim)
-
-
-def calc_agreement(differences, threshold=0.75, drop_coords=None):
-    """
-    Multi-model sign agreement: fraction of models agreeing the change is
-    positive, or fraction agreeing it's negative, at >= `threshold`.
- 
-    differences : dict {model: DataArray}
-        Per-model difference field (e.g. ramp_down minus ramp_up).
-    drop_coords : list of str, optional
-        Coordinate names to drop from each model's data before
-        concatenating along the new 'model' dimension.
-    Returns
-    -------
-    xr.DataArray of 1 where >=`threshold` of models agree on sign
-    (either direction), NaN elsewhere.
-    """
-    data = list(differences.values())
-    if drop_coords:
-        data = [
-            d.drop_vars([c for c in drop_coords if c in d.coords])
-            for d in data
-        ]
-    stacked = xr.concat(data, dim='model', compat='override', coords='minimal')
-    agreement_pos = xr.where(stacked > 0, 1, 0).mean(dim='model')
-    agreement_neg = xr.where(stacked < 0, 1, 0).mean(dim='model')
-    agree = xr.where(agreement_pos >= threshold, 1, 0) + xr.where(agreement_neg >= threshold, 1, 0)
-    return xr.where(agree != 0, 1, np.nan)
- 
- 
-def calc_gwl_branch_differences(frequencies, exclude_keys=('Multi-Model Median', 'median'),
-                                 drop_coords=None):
-    """
-    Ramp-down minus ramp-up exceedance-frequency difference for each
-    model, plus the multi-model agreement on the sign of that difference.
- 
-    frequencies : dict {model: Dataset/DataArray with a 'branch' dim}
-    exclude_keys : keys to skip when computing agreement 
-    drop_coords : list of str, optional
-        Passed through to calc_agreement. Pass
-        ['gwl'] when frequencies came from gwl_matching rather than
-        crossing_years.
-    """
-    differences = {
-        model: data.sel(branch='ramp_down') - data.sel(branch='ramp_up')
-        for model, data in frequencies.items()
-    }
-    agreement = calc_agreement(
-        {m: d for m, d in differences.items() if m not in exclude_keys},
-        drop_coords=drop_coords,
-    )
-    return differences, agreement
-
 # -------------------------------------------------------------------------
 # ETCCDI metrics
 # -------------------------------------------------------------------------
-
-def calc_txx(ds: xr.Dataset) -> xr.Dataset:
-    if "tasmax" in ds:  # only operate if tasmax exists
-        txx = ds["tasmax"].groupby("time.year").max(dim="time")
-        return txx.to_dataset(name="txx")
-    return ds  # return unchanged if no tasmax
-
-def calc_txx_anomaly(txx_ds, reference_period):
-    # txx has an integer 'year' dim, so reference_period is slice(1850, 1900)
-    return utils.calc_anomaly(txx_ds, txx_ds, reference_period, time_dim="year")
-
-def calc_tx90p(ds, ref_period):
+def calc_txx(ds):
     if "tasmax" not in ds:
-        return ds
- 
-    tasmax = ds["tasmax"]
-    tasmax = tasmax.sortby("time").drop_duplicates("time")
-    tasmax = tasmax.convert_calendar("noleap", align_on="date")
-    if not tasmax.attrs.get("units"):
-        tasmax = tasmax.assign_attrs(units="K")
+        return None
+    txx = ds["tasmax"].groupby("time.year").max("time")
+    return txx.chunk({"year": -1}).to_dataset(name="txx")
 
-    # --- THRESHOLD ---------------------------------------------------------
-    lo, hi = ref_period
-    mask = (tasmax["time.year"] >= lo) & (tasmax["time.year"] <= hi)
-    ref_ds = (
-        tasmax.isel(time=mask)
-        .chunk({"time": -1, "lat": 45, "lon": 45})
-    )
-    thresh_doy = percentile_doy(ref_ds, per=90).sel(percentiles=90).compute()
- 
-    # --- INDEX -------------------------------------------------------------
-    # tx90p compares each day to its day-of-year threshold: a per-timestep op
-    # that works on time-CHUNKED data. It never needs time=-1. Keep modest
-    # chunks so nothing gets rechunked into a giant contiguous block.
-    tasmax = tasmax.chunk({"time": 365, "lat": 45, "lon": 45})
-    tx90 = tx90p(tasmax, thresh_doy).groupby("time.year").mean(dim="time")
-    return tx90.to_dataset(name="tx90p")
-
-def calc_rxnday(ds: xr.Dataset, n: int = 1) -> xr.Dataset:
-    """
-    Calculate the ETCCDI RXnday index: annual maximum of the
-    running n-day precipitation total (n=1 -> Rx1day, n=5 -> Rx5day).
-    """
-    pr = ds['pr']
+def calc_rxnday(ds, n=1):
+    """ETCCDI RXnday: annual max of the running n-day precip total."""
+    if "pr" not in ds:
+        return None
+    pr = ds["pr"]
     if n > 1:
         pr = pr.rolling(time=n, min_periods=n).sum()
-    return pr.groupby('time.year').max(dim='time').to_dataset(name=f'rx{n}day')
+    return pr.groupby("time.year").max("time").chunk({"year": -1}).to_dataset(name=f"rx{n}day")
+
+def period_anomaly(index_ds, ref_period):
+    """Anomaly vs the index's own mean over ref_period=(lo, hi).
+    Returns None (member dropped) if the series doesn't cover it."""
+    lo, hi = ref_period
+    yrs = index_ds["year"]
+    if int(yrs.min()) > lo or int(yrs.max()) < hi:
+        return None
+    return index_ds - index_ds.sel(year=slice(lo, hi)).mean("year")
+
+def picontrol_anomaly(index_tree, pi_ref):
+    """{model: {expt: {member: ds}}} minus {model: {member: ref}}.
+    Members without a piControl reference are dropped."""
+    return {
+        model: {
+            expt: {mem: ds - pi_ref[model][mem]
+                   for mem, ds in mems.items() if mem in pi_ref.get(model, {})}
+            for expt, mems in expts.items()
+        }
+        for model, expts in index_tree.items()
+    }
+
+def _prep_tasmax(ds):
+    tasmax = ds["tasmax"].sortby("time").drop_duplicates("time")
+    tasmax = tasmax.convert_calendar("noleap", align_on="year" if tasmax.time.dt.calendar == "360_day" else "date")
+    # Chained runs can mix calendar labels (e.g. 'noleap' vs '365_day');
+    # rebuild time with one date type so cftime can difference it.
+    tasmax["time"] = [cftime.DatetimeNoLeap(t.year, t.month, t.day, t.hour) for t in tasmax.time.values]
+    if not tasmax.attrs.get("units"):
+        tasmax = tasmax.assign_attrs(units="K")
+    return tasmax
+
+def tx90p_threshold(ds, ref_period=(None, None)):
+    """
+    Day-of-year 90th percentile of tasmax over ref_period=(lo, hi).
+    None for either bound -> that end of the series (e.g. the whole piControl run).
+    Returns None if tasmax is missing or the series doesn't cover ref_period.
+    """
+    if "tasmax" not in ds:
+        return None
+    tasmax = _prep_tasmax(ds)
+    years = tasmax["time.year"]
+    yr_lo, yr_hi = int(years.min()), int(years.max())
+    lo = yr_lo if ref_period[0] is None else ref_period[0]
+    hi = yr_hi if ref_period[1] is None else ref_period[1]
+    if yr_lo > lo or yr_hi < hi:
+        return None
+    ref = tasmax.isel(time=(years >= lo) & (years <= hi)).chunk({"time": -1, "lat": 45, "lon": 45})
+    return percentile_doy(ref, per=90).sel(percentiles=90).compute()
+
+def calc_tx90p(ds, thresh_doy):
+    """Annual TX90p of ds against a precomputed day-of-year threshold."""
+    if "tasmax" not in ds or thresh_doy is None:
+        return None
+    tasmax = _prep_tasmax(ds).chunk({"time": 365, "lat": 45, "lon": 45})
+    thresh_doy = thresh_doy.chunk({"lat": 45, "lon": 45})
+    tx90 = tx90p(tasmax, thresh_doy).groupby("time.year").mean(dim="time")
+    return tx90.chunk({"year": -1}).to_dataset(name="tx90p")
+
+# def calc_txx_anomaly(txx_ds, reference_period):
+#     # txx has an integer 'year' dim, so reference_period is slice(1850, 1900)
+#     return utils.calc_anomaly(txx_ds, txx_ds, reference_period, time_dim="year")
+
+# def calc_tx90p(ds, ref_period):
+#     if "tasmax" not in ds:
+#         return ds
+ 
+#     tasmax = ds["tasmax"]
+#     tasmax = tasmax.sortby("time").drop_duplicates("time")
+#     tasmax = tasmax.convert_calendar("noleap", align_on="date")
+#     if not tasmax.attrs.get("units"):
+#         tasmax = tasmax.assign_attrs(units="K")
+
+#     # --- THRESHOLD ---------------------------------------------------------
+#     lo, hi = ref_period
+#     mask = (tasmax["time.year"] >= lo) & (tasmax["time.year"] <= hi)
+#     ref_ds = (
+#         tasmax.isel(time=mask)
+#         .chunk({"time": -1, "lat": 45, "lon": 45})
+#     )
+#     thresh_doy = percentile_doy(ref_ds, per=90).sel(percentiles=90).compute()
+ 
+#     # --- INDEX -------------------------------------------------------------
+#     # tx90p compares each day to its day-of-year threshold: a per-timestep op
+#     # that works on time-CHUNKED data. It never needs time=-1. Keep modest
+#     # chunks so nothing gets rechunked into a giant contiguous block.
+#     tasmax = tasmax.chunk({"time": 365, "lat": 45, "lon": 45})
+#     tx90 = tx90p(tasmax, thresh_doy).groupby("time.year").mean(dim="time")
+#     return tx90.to_dataset(name="tx90p")
+
+# def calc_rxnday(ds: xr.Dataset, n: int = 1) -> xr.Dataset:
+#     """
+#     Calculate the ETCCDI RXnday index: annual maximum of the
+#     running n-day precipitation total (n=1 -> Rx1day, n=5 -> Rx5day).
+#     """
+#     pr = ds['pr']
+#     if n > 1:
+#         pr = pr.rolling(time=n, min_periods=n).sum()
+#     return pr.groupby('time.year').max(dim='time').to_dataset(name=f'rx{n}day')
