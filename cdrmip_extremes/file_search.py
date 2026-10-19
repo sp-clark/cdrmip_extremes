@@ -16,6 +16,7 @@ DEFAULT_BASE_DIRS = [
     # RAW_DIR,
     Path("/g/data/fs38/publications/CMIP6"),
     Path("/g/data/oi10/replicas/CMIP6"),
+    Path("/g/data/if69/sc1326/esgf_cache/CMIP6"),
 ]
 
 

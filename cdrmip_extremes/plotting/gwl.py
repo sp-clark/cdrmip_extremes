@@ -27,7 +27,8 @@ def _prep(node, varname=None, gwl=None, period=None):
 
 def plot_gwl_diff(data_dict, expt, varname=None, gwl=None, period=None, n_cols=3, levels=None,
                   cmap=None, cbar_label="SAT difference (°C)", suptitle=None, agreement=None,
-                  figsize=None):
+                  figsize=None,titles=None,
+                 fig_dir=None, folder=None, file_name=None):
     """
     One difference map per model, multi-model median first and stippled with
     `agreement`. `data_dict` is {model: {expt: Dataset-or-DataArray}}.
@@ -44,7 +45,8 @@ def plot_gwl_diff(data_dict, expt, varname=None, gwl=None, period=None, n_cols=3
                               figsize=figsize, layout="constrained")
 
     for model, ax in zip(models, axes.flat):
-        mesh = plot_map_panel(ax, to_plot[model], cmap, norm, title=display_name(model),
+        title = (titles or {}).get(model, display_name(model))
+        mesh = plot_map_panel(ax, to_plot[model], cmap, norm, title=title,
                               title_fontsize=20, method="imshow")
         if agreement is not None and model == MMM:
             add_stippling(ax, agreement)
@@ -55,6 +57,7 @@ def plot_gwl_diff(data_dict, expt, varname=None, gwl=None, period=None, n_cols=3
                  fontsize=18, tick_fontsize=16)
     fig.suptitle(suptitle or f"{expt} {varname} differences {period_phrase(period, gwl)}",
                  fontsize=24, y=1.05)
+    maybe_save(fig, fig_dir, folder, file_name)
     return fig, axes
 
 

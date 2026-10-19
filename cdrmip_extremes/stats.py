@@ -40,6 +40,13 @@ def peak_warming(ds, time_dim='year',round=True):
         peak = ds.sel({time_dim: peak_year})
     return peak, peak_year
 
+def branch_difference(da, turn=140):
+    """
+    """
+    pre = da.sel(year=slice(0, turn))
+    post = da.sel(year=slice(turn, 2 * turn)).assign_coords(year=pre.year[::-1])
+    return post - pre
+
 
 # ---------------------------------------------------------------------------
 # model agreement
@@ -63,6 +70,8 @@ def calc_agreement(differences, threshold=0.75, expt=None, drop_coords=None):
     agreement_neg = (stacked < 0).mean(dim="model")
     agreement = xr.where((agreement_pos >= threshold) | (agreement_neg >= threshold), 1, np.nan)
     return _restore_reduced_coords(agreement, dropped, "median")
+
+
 
 # ---------------------------------------------------------------------------
 # regressions

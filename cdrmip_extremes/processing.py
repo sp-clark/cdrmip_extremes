@@ -214,25 +214,16 @@ def regrid_to_common(ds, method='bilinear', periodic=True):
 # ---------------------------------------------------------------------------
 
 def calc_anomaly(
-    ds: xr.Dataset,
-    ds_ref: xr.Dataset,
+    ds: xr.Dataset | xr.DataArray,
+    ds_ref: xr.Dataset | xr.DataArray,
     reference_period: slice,
     *,
     time_dim="time",
-) -> xr.Dataset:
-    """
-    Function to calculate anomaly with respect to 
-    reference period. Assumes child dataset is already
-    concatenated to parent.
-    """
-    # select reference slice and mean
+) -> xr.Dataset | xr.DataArray:
     if time_dim not in ds.dims:
         raise ValueError(f"{time_dim} is not a dimension of this dataset. "
                          f"Available dims: {list(ds.dims)}")
-    # calculate reference mean
-    ref = ds_ref.sel({time_dim:reference_period})
-    ref = ref.mean(dim=time_dim)
-
-    # subtract reference from ds
-    anom = ds - ref
-    return anom
+    ref = ds_ref.sel({time_dim: reference_period})
+    if ref.sizes[time_dim] == 0:
+        raise ValueError(f"No data in reference period {reference_period}")
+    return ds - ref.mean(dim=time_dim)

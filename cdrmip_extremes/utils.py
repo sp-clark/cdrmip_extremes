@@ -46,10 +46,11 @@ def _map_leaves(nested_dict, func):
 
 def map_nested(func, *trees):
     """Apply func to the leaves of one or more identically nested dicts.
-    Leaves for which func returns None are dropped."""
+    Leaves returning None, and branches left empty, are dropped."""
     if isinstance(trees[0], dict):
         out = {k: map_nested(func, *(t[k] for t in trees)) for k in trees[0]}
-        return {k: v for k, v in out.items() if v is not None}
+        return {k: v for k, v in out.items()
+                if v is not None and not (isinstance(v, dict) and not v)}
     return func(*trees)
     
 def map_with_picontrol(func, tree, pi_tree):

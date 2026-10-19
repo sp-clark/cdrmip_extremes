@@ -9,7 +9,7 @@ import cftime
 from collections import defaultdict
 
 from xclim.core.calendar import percentile_doy
-from xclim.indices import tx90p, warm_spell_duration_index, max_1day_precipitation_amount, max_n_day_precipitation_amount
+from xclim.indices import tx90p, tn10p, warm_spell_duration_index, max_1day_precipitation_amount, max_n_day_precipitation_amount
 
 from . import stats, utils
 
@@ -133,6 +133,21 @@ def calculate_exceedances(monthly_temps, ext_thresholds, ext_type):
         ((compare(ext_thresholds.threshold3).count(dim='year') / n_years) * 100).rename('sigma3'),
     ])
 
+# -------------------------------------------------------------------------
+# Mean, Median or Std. of extreme month temperatures
+# -------------------------------------------------------------------------
+
+def ext_month_stat_diff(ext_mon_data, extrema, method="mean"):
+    """
+    Ramp-down minus ramp-up `method` ('mean', 'std', 'max', ...) over years of
+    the extreme-month data, for each model/expt in {model: {expt: ds}}.
+    """
+    def diff(ds):
+        ds = ds.sel(extrema=extrema)
+        stat = lambda branch: getattr(ds.sel(branch=branch), method)(dim="year")
+        return stat("ramp_down") - stat("ramp_up")
+    return utils.map_nested(diff, ext_mon_data)
+
 
 # -------------------------------------------------------------------------
 # ETCCDI metrics
@@ -142,6 +157,12 @@ def calc_txx(ds):
         return None
     txx = ds["tasmax"].groupby("time.year").max("time")
     return txx.chunk({"year": -1}).to_dataset(name="txx")
+
+def calc_tnn(ds):
+    if "tasmin" not in ds:
+        return None
+    tnn = ds["tasmin"].groupby("time.year").min("time")
+    return tnn.chunk({"year": -1}).to_dataset(name="tnn")
 
 def calc_rxnday(ds, n=1):
     """ETCCDI RXnday: annual max of the running n-day precip total."""
@@ -173,42 +194,89 @@ def picontrol_anomaly(index_tree, pi_ref):
         for model, expts in index_tree.items()
     }
 
-def _prep_tasmax(ds):
-    tasmax = ds["tasmax"].sortby("time").drop_duplicates("time")
-    tasmax = tasmax.convert_calendar("noleap", align_on="year" if tasmax.time.dt.calendar == "360_day" else "date")
+
+def _prep_temp(ds, var):
+    da = ds[var].sortby("time").drop_duplicates("time")
+    da = da.convert_calendar("noleap", align_on="year" if da.time.dt.calendar == "360_day" else "date")
     # Chained runs can mix calendar labels (e.g. 'noleap' vs '365_day');
     # rebuild time with one date type so cftime can difference it.
-    tasmax["time"] = [cftime.DatetimeNoLeap(t.year, t.month, t.day, t.hour) for t in tasmax.time.values]
-    if not tasmax.attrs.get("units"):
-        tasmax = tasmax.assign_attrs(units="K")
-    return tasmax
+    da["time"] = [cftime.DatetimeNoLeap(t.year, t.month, t.day, t.hour) for t in da.time.values]
+    if not da.attrs.get("units"):
+        da = da.assign_attrs(units="K")
+    return da
 
-def tx90p_threshold(ds, ref_period=(None, None)):
-    """
-    Day-of-year 90th percentile of tasmax over ref_period=(lo, hi).
-    None for either bound -> that end of the series (e.g. the whole piControl run).
-    Returns None if tasmax is missing or the series doesn't cover ref_period.
-    """
-    if "tasmax" not in ds:
+def _doy_threshold(ds, var, per, ref_period):
+    """Day-of-year `per`th percentile of `var` over ref_period=(lo, hi); None bounds -> series ends."""
+    if var not in ds:
         return None
-    tasmax = _prep_tasmax(ds)
-    years = tasmax["time.year"]
+    da = _prep_temp(ds, var)
+    years = da["time.year"]
     yr_lo, yr_hi = int(years.min()), int(years.max())
     lo = yr_lo if ref_period[0] is None else ref_period[0]
     hi = yr_hi if ref_period[1] is None else ref_period[1]
     if yr_lo > lo or yr_hi < hi:
         return None
-    ref = tasmax.isel(time=(years >= lo) & (years <= hi)).chunk({"time": -1, "lat": 45, "lon": 45})
-    return percentile_doy(ref, per=90).sel(percentiles=90).compute()
+    ref = da.isel(time=(years >= lo) & (years <= hi)).chunk({"time": -1, "lat": 10, "lon": 10})
+    return percentile_doy(ref, per=per).sel(percentiles=per).compute()
+
+def tx90p_threshold(ds, ref_period=(None, None)):
+    return _doy_threshold(ds, "tasmax", 90, ref_period)
+
+def tn10p_threshold(ds, ref_period=(None, None)):
+    return _doy_threshold(ds, "tasmin", 10, ref_period)
 
 def calc_tx90p(ds, thresh_doy):
     """Annual TX90p of ds against a precomputed day-of-year threshold."""
     if "tasmax" not in ds or thresh_doy is None:
         return None
-    tasmax = _prep_tasmax(ds).chunk({"time": 365, "lat": 45, "lon": 45})
-    thresh_doy = thresh_doy.chunk({"lat": 45, "lon": 45})
-    tx90 = tx90p(tasmax, thresh_doy).groupby("time.year").mean(dim="time")
+    tasmax = _prep_temp(ds, "tasmax").chunk({"time": 365, "lat": 45, "lon": 45})
+    tx90 = tx90p(tasmax, thresh_doy.chunk({"lat": 45, "lon": 45})).groupby("time.year").mean(dim="time")
     return tx90.chunk({"year": -1}).to_dataset(name="tx90p")
+
+def calc_tn10p(ds, thresh_doy):
+    """Annual TN10p of ds against a precomputed day-of-year threshold."""
+    if "tasmin" not in ds or thresh_doy is None:
+        return None
+    tasmin = _prep_temp(ds, "tasmin").chunk({"time": 365, "lat": 45, "lon": 45})
+    tn10 = tn10p(tasmin, thresh_doy.chunk({"lat": 45, "lon": 45})).groupby("time.year").mean(dim="time")
+    return tn10.chunk({"year": -1}).to_dataset(name="tn10p")
+
+# def _prep_tasmax(ds):
+#     tasmax = ds["tasmax"].sortby("time").drop_duplicates("time")
+#     tasmax = tasmax.convert_calendar("noleap", align_on="year" if tasmax.time.dt.calendar == "360_day" else "date")
+#     # Chained runs can mix calendar labels (e.g. 'noleap' vs '365_day');
+#     # rebuild time with one date type so cftime can difference it.
+#     tasmax["time"] = [cftime.DatetimeNoLeap(t.year, t.month, t.day, t.hour) for t in tasmax.time.values]
+#     if not tasmax.attrs.get("units"):
+#         tasmax = tasmax.assign_attrs(units="K")
+#     return tasmax
+
+# def tx90p_threshold(ds, ref_period=(None, None)):
+#     """
+#     Day-of-year 90th percentile of tasmax over ref_period=(lo, hi).
+#     None for either bound -> that end of the series (e.g. the whole piControl run).
+#     Returns None if tasmax is missing or the series doesn't cover ref_period.
+#     """
+#     if "tasmax" not in ds:
+#         return None
+#     tasmax = _prep_tasmax(ds)
+#     years = tasmax["time.year"]
+#     yr_lo, yr_hi = int(years.min()), int(years.max())
+#     lo = yr_lo if ref_period[0] is None else ref_period[0]
+#     hi = yr_hi if ref_period[1] is None else ref_period[1]
+#     if yr_lo > lo or yr_hi < hi:
+#         return None
+#     ref = tasmax.isel(time=(years >= lo) & (years <= hi)).chunk({"time": -1, "lat": 10, "lon": 10})
+#     return percentile_doy(ref, per=90).sel(percentiles=90).compute()
+
+# def calc_tx90p(ds, thresh_doy):
+#     """Annual TX90p of ds against a precomputed day-of-year threshold."""
+#     if "tasmax" not in ds or thresh_doy is None:
+#         return None
+#     tasmax = _prep_tasmax(ds).chunk({"time": 365, "lat": 45, "lon": 45})
+#     thresh_doy = thresh_doy.chunk({"lat": 45, "lon": 45})
+#     tx90 = tx90p(tasmax, thresh_doy).groupby("time.year").mean(dim="time")
+#     return tx90.chunk({"year": -1}).to_dataset(name="tx90p")
 
 # def calc_txx_anomaly(txx_ds, reference_period):
 #     # txx has an integer 'year' dim, so reference_period is slice(1850, 1900)

@@ -219,3 +219,10 @@ def load_fx(variables,table_id='fx',domain='atm',experiment_id='1pctCO2-cdr',
             data[var] = ds
             
     return data
+
+def load_land_ocean_masks(sftlf=None):
+    if sftlf == None:
+        sftlf = load_fx(['sftlf'])['sftlf'].sftlf
+    land_mask = xr.where(sftlf > 50, 1, 0)   # 1 = land, 0 = ocean
+    ocean_mask = xr.where(sftlf <= 50, 1, 0) # 1 = ocean, 0 = land
+    return land_mask,ocean_mask

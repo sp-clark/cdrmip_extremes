@@ -74,7 +74,7 @@ def plot_gsat_timeseries(gsat_rolling, colour_dict,
                          ylabel="GSAT (°C)", xlabel="Time", xlim=(1850, 2300), ylim=(-0.2, 4.1),
                          xticks=None, end_marker_year=2190, figsize=(16, 8), legend_ncol=5,
                          gwl_marker_mode="height", crossing_years=None, gwl_matching_years=None, gwl=None,
-                         raw_tree=None, raw_alpha=0.3,
+                         raw_tree=None, raw_alpha=0.3, vlines = (140,280),
                          co2=None, co2_label="Atmospheric CO$_2$ (ppm)",
                          legend_loc="below", legend_fontsize=None,
                          fig=None, ax=None, fig_dir=None, folder=None, file_name=None):
@@ -122,7 +122,7 @@ def plot_gsat_timeseries(gsat_rolling, colour_dict,
     ax.set_xlabel(xlabel, fontsize=18)
     ax.set_ylabel(ylabel, fontsize=18)
     ax.tick_params(axis="both", which="major", labelsize=16)
-    for x in (140, 280):
+    for x in vlines:
         ax.axvline(x=x, color="gray", linewidth=1.0, linestyle="--", alpha=0.7)
     ax.axhline(y=0, color="black", linewidth=1.0)
 
