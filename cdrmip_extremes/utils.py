@@ -170,6 +170,12 @@ def member_median(tree):
                     for expt, members in expts.items()}
             for model, expts in tree.items()}
 
+def add_model_reduction(model_dt, reduction="median"):
+    """{model: da} -> same dict plus a multi_model_{reduction} entry."""
+    key = f"multi_model_{reduction}"
+    models = [da for m, da in model_dt.items() if m != key]
+    combined = xr.concat(models, dim="model")
+    return {**model_dt, key: getattr(combined, reduction)(dim="model")}
 # ---------------------------------------------------------------------------
 # CO2 concentrations
 # ---------------------------------------------------------------------------

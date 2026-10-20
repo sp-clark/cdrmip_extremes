@@ -374,12 +374,13 @@ class LoadingPipeline:
                 cfg = cfg_by_expt[expt]
                 if not cfg.crossing_gwls:
                     continue
+                time_dim = 'time' if cfg.anomaly_time_resolution == 'native' else 'year'
                 for member, ds in member_dict.items():
                     if 'gsat' not in ds:
                         continue
                     crossing_years[model][expt][member] = gwl.find_crossing_years(
                         ds['gsat'], window=cfg.rolling_window,
-                        gwls=cfg.crossing_gwls, time_dim='year',
+                        gwls=cfg.crossing_gwls, time_dim=time_dim,
                         overshoot=cfg.overshoot,
                     )
  
@@ -402,6 +403,7 @@ class LoadingPipeline:
                 cfg = cfg_by_expt[expt]
                 if cfg.gwl_match_period is None:
                     continue
+                time_dim = 'time' if cfg.anomaly_time_resolution == 'native' else 'year'
                 for member, ds in member_dict.items():
                     if 'gsat' not in ds:
                         continue
@@ -412,7 +414,7 @@ class LoadingPipeline:
                     matching_da = gwl.find_matching_gwl_year(
                         ds['gsat'], window=cfg.rolling_window,
                         match_slice=slice(*cfg.gwl_match_period),
-                        time_dim='year', search_slice=search_slice,
+                        time_dim=time_dim, search_slice=search_slice,
                     )
                     matching[model][expt][member] = matching_da
 

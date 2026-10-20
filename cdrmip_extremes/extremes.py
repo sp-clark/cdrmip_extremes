@@ -92,7 +92,7 @@ def select_extreme_month(ds, ext_months, ext_type_to_extrema=None, varname='tas'
         ext_type_to_extrema = {'heat': 'max', 'cold': 'min'}
 
     da = ds[varname] if varname in ds else ds
-    months = ext_months['month'] if 'month' in ext_months else ext_months
+    months = ext_months['month'] if isinstance(ext_months, xr.Dataset) else ext_months
 
     dss = []
     for ext_type, extrema_label in ext_type_to_extrema.items():
