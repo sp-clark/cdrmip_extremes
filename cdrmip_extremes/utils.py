@@ -25,10 +25,6 @@ def global_mean(x, var="tas"):
 
     return da.weighted(weights).mean(("lon", "lat"))
 
-# def rolling(ds,window,time_dim='year'):
-#     if time_dim != 'year':
-#         ds = ds.groupby('time.year').mean(dim='time')
-#     return ds.rolling(year=window,center=True,min_periods=1).mean()
 
 def defaultdict_to_dict(d):
     if isinstance(d, defaultdict):

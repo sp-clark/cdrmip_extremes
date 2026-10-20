@@ -1,6 +1,5 @@
 """
-core.py -- data access, map building blocks and small helpers shared by all
-plotting modules. Nothing in here imports from the other plotting modules.
+core.py 
 """
 
 from pathlib import Path

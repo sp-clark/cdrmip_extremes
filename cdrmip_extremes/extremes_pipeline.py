@@ -31,16 +31,16 @@ class ExtremesPipeline:
 
         self.extreme_months = {}       
         self.thresholds = {}           
-        self.gwl_period_extremes = {}          # model -> expt -> member -> DataArray (from crossing_years)
-        self.gwl_period_extremes_matching = {} # model -> expt -> member -> DataArray (from gwl_matching)
-        self.exceedances = {}                  # model -> expt -> {'heat': Dataset, 'cold': Dataset}
+        self.gwl_period_extremes = {}          
+        self.gwl_period_extremes_matching = {} 
+        self.exceedances = {}                  
         self.exceedances_matching = {}
-        self.branch_differences = {}           # model -> expt -> {'heat': DataArray, 'cold': DataArray}
+        self.branch_differences = {}           
         self.branch_differences_matching = {}
-        self.agreement = {}                    # expt -> {'heat': DataArray, 'cold': DataArray}
+        self.agreement = {}                    
         self.agreement_matching = {}
 
-        # populated by compute_multi_model_stat() -- optional
+
         self.exceedances_median_multimodel = {}
         self.branch_differences_median_multimodel = {}
 

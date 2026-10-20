@@ -61,7 +61,7 @@ def calendar_isleap(year, calendar):
     if calendar in ('all_leap', '366_day'):
         return True
     if calendar == '360_day':
-        return False  # no Feb 29 concept
+        return False  # no Feb 29
     raise ValueError(f"unrecognized calendar: {calendar}")
 
 
